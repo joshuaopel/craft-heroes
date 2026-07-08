@@ -1,4 +1,18 @@
-import type { CampaignData, ClassDefinition, ClassId, ClassSectionStats, LevelData, TerrainType, TileData, UnitData, UnitFaceLayout, UnitTemplate } from "./schema";
+import type {
+  CampaignData,
+  ClassDefinition,
+  ClassId,
+  ClassSectionStats,
+  EnvironmentMaterialDefinition,
+  EnvironmentSettings,
+  LevelData,
+  PropDefinition,
+  TerrainType,
+  TileData,
+  UnitData,
+  UnitFaceLayout,
+  UnitTemplate
+} from "./schema";
 
 function stats(attack: number, defense: number, move: number, range: number, support: number): ClassSectionStats {
   return { attack, defense, move, range, support };
@@ -97,6 +111,125 @@ export const defaultClassDefinitions: ClassDefinition[] = [
 
 export const classNames: ClassId[] = defaultClassDefinitions.map((classDefinition) => classDefinition.id);
 
+export const defaultEnvironmentSettings: EnvironmentSettings = {
+  skyColor: "#7bb6c5",
+  fogColor: "#7bb6c5",
+  groundColor: "#526553",
+  groundTextureUrl: "",
+  ambientIntensity: 1.2,
+  sunIntensity: 2
+};
+
+export const defaultEnvironmentMaterials: EnvironmentMaterialDefinition[] = [
+  {
+    id: "grass",
+    name: "Grass",
+    topColor: "#8fc265",
+    sideColor: "#5c6f48",
+    topImageUrl: "",
+    sideImageUrl: "",
+    topRule: "Open playable ground. Use leafy or mossy top texture.",
+    sideRule: "Use dirt or root-heavy side texture for exposed vertical faces.",
+    movementCost: 1,
+    blocksLineOfSight: false
+  },
+  {
+    id: "stone",
+    name: "Stone",
+    topColor: "#8f958d",
+    sideColor: "#646a63",
+    topImageUrl: "",
+    sideImageUrl: "",
+    topRule: "Hard elevation surface. Good for ridges, ruins, and high ground.",
+    sideRule: "Use chipped block or cliff side texture that matches the top palette.",
+    movementCost: 1,
+    blocksLineOfSight: false
+  },
+  {
+    id: "sand",
+    name: "Sand",
+    topColor: "#d0b66b",
+    sideColor: "#9b7f46",
+    topImageUrl: "",
+    sideImageUrl: "",
+    topRule: "Loose terrain. Use soft grain top texture with lower contrast.",
+    sideRule: "Use compacted tan side texture for cut banks and dunes.",
+    movementCost: 2,
+    blocksLineOfSight: false
+  },
+  {
+    id: "water",
+    name: "Water",
+    topColor: "#5198ba",
+    sideColor: "#385f6f",
+    topImageUrl: "",
+    sideImageUrl: "",
+    topRule: "Shallow tactical water. Use animated-looking or glossy top art.",
+    sideRule: "Use dark wet bank side texture so height cuts remain readable.",
+    movementCost: 3,
+    blocksLineOfSight: false
+  }
+];
+
+export const defaultPropDefinitions: PropDefinition[] = [
+  {
+    id: "wall",
+    name: "Wall",
+    role: "blocker",
+    color: "#6c716a",
+    textureUrl: "",
+    width: 0.75,
+    height: 0.9,
+    depth: 0.75,
+    blocksMovement: true,
+    blocksLineOfSight: true,
+    coverBonus: 2,
+    notes: ["Full blocker", "Breaks line of sight"]
+  },
+  {
+    id: "tower",
+    name: "Tower",
+    role: "blocker",
+    color: "#696d5e",
+    textureUrl: "",
+    width: 0.82,
+    height: 1.25,
+    depth: 0.82,
+    blocksMovement: true,
+    blocksLineOfSight: true,
+    coverBonus: 3,
+    notes: ["Tall blocker", "Marks height advantage"]
+  },
+  {
+    id: "tree",
+    name: "Tree",
+    role: "cover",
+    color: "#3e8a58",
+    textureUrl: "",
+    width: 0.7,
+    height: 0.95,
+    depth: 0.7,
+    blocksMovement: true,
+    blocksLineOfSight: false,
+    coverBonus: 1,
+    notes: ["Soft cover", "Can be used as forest dressing"]
+  },
+  {
+    id: "cover",
+    name: "Cover",
+    role: "cover",
+    color: "#776a50",
+    textureUrl: "",
+    width: 0.9,
+    height: 0.42,
+    depth: 0.35,
+    blocksMovement: false,
+    blocksLineOfSight: false,
+    coverBonus: 1,
+    notes: ["Half cover", "Does not block movement"]
+  }
+];
+
 function faceLayout(offset = 0): UnitFaceLayout {
   const spin = (amount: number) => classNames.map((_, index) => classNames[(index + offset + amount) % classNames.length]);
   return {
@@ -156,11 +289,18 @@ export const forestPass: LevelData = {
   name: "Forest Pass",
   width: 10,
   depth: 8,
+  environment: structuredClone(defaultEnvironmentSettings),
   tiles: makeTiles(10, 8),
   obstacles: [
     { id: "obs-wall-1", type: "wall", x: 5, z: 2 },
     { id: "obs-tower-1", type: "tower", x: 7, z: 5 },
     { id: "obs-tree-1", type: "tree", x: 8, z: 2 }
+  ],
+  surroundings: [
+    { id: "sur-tree-west-1", type: "tree", x: -2, z: 1, rotation: 0.2, scale: 1.25 },
+    { id: "sur-tree-east-1", type: "tree", x: 11, z: 2, rotation: 0.8, scale: 1.1 },
+    { id: "sur-wall-north-1", type: "wall", x: 4, z: -2, rotation: 0, scale: 0.9 },
+    { id: "sur-cover-south-1", type: "cover", x: 7, z: 9, rotation: 0.4, scale: 1.15 }
   ],
   units: [
     unit("player-1", "player", "starter-cube", 1, 6),
@@ -187,11 +327,25 @@ export const ridgeAmbush: LevelData = {
   name: "Ridge Ambush",
   width: 10,
   depth: 8,
+  environment: {
+    ...defaultEnvironmentSettings,
+    skyColor: "#8aa6b2",
+    fogColor: "#8aa6b2",
+    groundColor: "#5f5d52",
+    ambientIntensity: 1.1,
+    sunIntensity: 2.2
+  },
   tiles: makeTiles(10, 8, "stone", 1),
   obstacles: [
     { id: "ridge-cover-1", type: "cover", x: 3, z: 3 },
     { id: "ridge-cover-2", type: "cover", x: 6, z: 4 },
     { id: "ridge-tower", type: "tower", x: 8, z: 2 }
+  ],
+  surroundings: [
+    { id: "sur-ridge-wall-west", type: "wall", x: -2, z: 4, rotation: 0.1, scale: 1.1 },
+    { id: "sur-ridge-tower-east", type: "tower", x: 11, z: 1, rotation: 0.2, scale: 0.95 },
+    { id: "sur-ridge-cover-north", type: "cover", x: 2, z: -2, rotation: 0.5, scale: 1.2 },
+    { id: "sur-ridge-wall-south", type: "wall", x: 8, z: 9, rotation: 0.7, scale: 0.85 }
   ],
   units: [
     unit("player-1", "player", "starter-cube", 1, 6),

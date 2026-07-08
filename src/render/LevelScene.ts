@@ -1,6 +1,19 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
-import type { ClassDefinition, ClassId, LevelData, ObstacleData, SectionName, TerrainType, TileCoord, UnitData } from "../game/schema";
+import type {
+  ClassDefinition,
+  ClassId,
+  EnvironmentMaterialDefinition,
+  EnvironmentSettings,
+  LevelData,
+  ObstacleData,
+  PropDefinition,
+  PropDefinitionId,
+  SectionName,
+  SurroundingPropData,
+  TileCoord,
+  UnitData
+} from "../game/schema";
 
 const tileSize = 1.08;
 const heightStep = 0.28;
@@ -8,17 +21,47 @@ const baseTileHeight = 0.18;
 const sectionNames: SectionName[] = ["head", "body", "legs"];
 const dirOrder = ["S", "E", "N", "W"];
 
-const terrainColors: Record<TerrainType, string> = {
-  grass: "#8fc265",
-  stone: "#8f958d",
-  sand: "#d0b66b",
-  water: "#5198ba"
-};
-
 const sectionSpecs: Record<SectionName, { height: number; width: number }> = {
   legs: { height: 0.54, width: 0.62 },
   body: { height: 0.62, width: 0.72 },
   head: { height: 0.54, width: 0.62 }
+};
+
+const fallbackEnvironment: EnvironmentSettings = {
+  skyColor: "#7bb6c5",
+  fogColor: "#7bb6c5",
+  groundColor: "#526553",
+  groundTextureUrl: "",
+  ambientIntensity: 1.2,
+  sunIntensity: 2
+};
+
+const fallbackMaterial: EnvironmentMaterialDefinition = {
+  id: "grass",
+  name: "Grass",
+  topColor: "#8fc265",
+  sideColor: "#5c6f48",
+  topImageUrl: "",
+  sideImageUrl: "",
+  topRule: "Fallback playable ground.",
+  sideRule: "Fallback exposed block side.",
+  movementCost: 1,
+  blocksLineOfSight: false
+};
+
+const fallbackProp: PropDefinition = {
+  id: "wall",
+  name: "Wall",
+  role: "blocker",
+  color: "#6c716a",
+  textureUrl: "",
+  width: 0.75,
+  height: 0.9,
+  depth: 0.75,
+  blocksMovement: true,
+  blocksLineOfSight: true,
+  coverBonus: 2,
+  notes: []
 };
 
 type ClickHandler = (coord: TileCoord) => void;
@@ -32,22 +75,34 @@ export class LevelScene {
   private readonly camera = new THREE.PerspectiveCamera(50, 1, 0.1, 100);
   private readonly controls: OrbitControls;
   private readonly root = new THREE.Group();
+  private readonly hemiLight = new THREE.HemisphereLight("#e6fff2", "#405246", 1.2);
+  private readonly sunLight = new THREE.DirectionalLight("#fff0ce", 2);
+  private readonly fillLight = new THREE.DirectionalLight("#89d7ff", 0.65);
   private readonly raycaster = new THREE.Raycaster();
   private readonly pointer = new THREE.Vector2();
   private readonly clickable: THREE.Object3D[] = [];
   private readonly textureLoader = new THREE.TextureLoader();
   private classDefinitions: ClassDefinition[] = [];
+  private environmentMaterials: EnvironmentMaterialDefinition[] = [];
+  private propDefinitions: PropDefinition[] = [];
   private classMaterials: Record<SectionName, Record<ClassId, THREE.MeshStandardMaterial>> = {
     head: {},
     body: {},
     legs: {}
   };
+  private terrainMaterials: Record<string, { top: THREE.MeshStandardMaterial; side: THREE.MeshStandardMaterial }> = {};
+  private propMaterials: Record<PropDefinitionId, THREE.MeshStandardMaterial> = {};
   private level?: LevelData;
   private selected?: TileCoord;
   private mode: "editor" | "play" = "editor";
   private clickHandler?: ClickHandler;
 
-  constructor(private readonly canvas: HTMLCanvasElement, classDefinitions: ClassDefinition[] = []) {
+  constructor(
+    private readonly canvas: HTMLCanvasElement,
+    classDefinitions: ClassDefinition[] = [],
+    environmentMaterials: EnvironmentMaterialDefinition[] = [],
+    propDefinitions: PropDefinition[] = []
+  ) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: "high-performance" });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.shadowMap.enabled = true;
@@ -56,17 +111,15 @@ export class LevelScene {
     this.scene.background = new THREE.Color("#7bb6c5");
     this.scene.fog = new THREE.Fog("#7bb6c5", 13, 28);
     this.scene.add(this.root);
-    this.scene.add(new THREE.HemisphereLight("#e6fff2", "#405246", 1.2));
+    this.scene.add(this.hemiLight);
 
-    const sun = new THREE.DirectionalLight("#fff0ce", 2);
-    sun.position.set(-5, 8, 6);
-    sun.castShadow = true;
-    sun.shadow.mapSize.set(2048, 2048);
-    this.scene.add(sun);
+    this.sunLight.position.set(-5, 8, 6);
+    this.sunLight.castShadow = true;
+    this.sunLight.shadow.mapSize.set(2048, 2048);
+    this.scene.add(this.sunLight);
 
-    const fill = new THREE.DirectionalLight("#89d7ff", 0.65);
-    fill.position.set(6, 4, -5);
-    this.scene.add(fill);
+    this.fillLight.position.set(6, 4, -5);
+    this.scene.add(this.fillLight);
 
     this.controls = new OrbitControls(this.camera, canvas);
     this.controls.enableDamping = true;
@@ -76,6 +129,8 @@ export class LevelScene {
     this.controls.maxPolarAngle = Math.PI * 0.44;
 
     this.setClassDefinitions(classDefinitions);
+    this.setEnvironmentMaterials(environmentMaterials);
+    this.setPropDefinitions(propDefinitions);
     this.canvas.addEventListener("click", (event) => this.pick(event));
     window.addEventListener("resize", () => this.resize());
     this.resize();
@@ -115,6 +170,26 @@ export class LevelScene {
     }
   }
 
+  setEnvironmentMaterials(environmentMaterials: EnvironmentMaterialDefinition[]): void {
+    const previousMaterials = this.collectTerrainMaterials();
+    this.environmentMaterials = structuredClone(environmentMaterials.length ? environmentMaterials : [fallbackMaterial]);
+    this.terrainMaterials = this.createTerrainMaterials(this.environmentMaterials);
+    this.renderLevel();
+    for (const material of previousMaterials) {
+      this.disposeMaterial(material);
+    }
+  }
+
+  setPropDefinitions(propDefinitions: PropDefinition[]): void {
+    const previousMaterials = this.collectPropMaterials();
+    this.propDefinitions = structuredClone(propDefinitions.length ? propDefinitions : [fallbackProp]);
+    this.propMaterials = this.createPropMaterials(this.propDefinitions);
+    this.renderLevel();
+    for (const material of previousMaterials) {
+      this.disposeMaterial(material);
+    }
+  }
+
   frameCurrentLevel(): void {
     if (this.level) {
       this.frameCamera(this.level);
@@ -137,6 +212,43 @@ export class LevelScene {
       }
     }
     return materials;
+  }
+
+  private createTerrainMaterials(
+    environmentMaterials: EnvironmentMaterialDefinition[]
+  ): Record<string, { top: THREE.MeshStandardMaterial; side: THREE.MeshStandardMaterial }> {
+    const materials: Record<string, { top: THREE.MeshStandardMaterial; side: THREE.MeshStandardMaterial }> = {};
+    for (const definition of environmentMaterials) {
+      materials[definition.id] = {
+        top: this.createMappedMaterial(definition.topColor, definition.topImageUrl, 0.72),
+        side: this.createMappedMaterial(definition.sideColor, definition.sideImageUrl, 0.86)
+      };
+    }
+    return materials;
+  }
+
+  private createPropMaterials(propDefinitions: PropDefinition[]): Record<PropDefinitionId, THREE.MeshStandardMaterial> {
+    const materials: Record<PropDefinitionId, THREE.MeshStandardMaterial> = {};
+    for (const definition of propDefinitions) {
+      materials[definition.id] = this.createMappedMaterial(definition.color, definition.textureUrl, 0.82);
+    }
+    return materials;
+  }
+
+  private createMappedMaterial(color: string, imageUrl: string, roughness: number): THREE.MeshStandardMaterial {
+    if (!imageUrl) {
+      return new THREE.MeshStandardMaterial({ color, roughness, metalness: 0.02 });
+    }
+    const texture = this.textureLoader.load(imageUrl);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.magFilter = THREE.NearestFilter;
+    texture.minFilter = THREE.NearestFilter;
+    return new THREE.MeshStandardMaterial({
+      color: "#ffffff",
+      map: texture,
+      roughness,
+      metalness: 0.02
+    });
   }
 
   private createSectionMaterial(classDefinition: ClassDefinition, section: SectionName): THREE.MeshStandardMaterial {
@@ -164,6 +276,43 @@ export class LevelScene {
     return sectionNames.flatMap((section) => Object.values(this.classMaterials[section]));
   }
 
+  private collectTerrainMaterials(): THREE.MeshStandardMaterial[] {
+    return Object.values(this.terrainMaterials).flatMap((materialSet) => [materialSet.top, materialSet.side]);
+  }
+
+  private collectPropMaterials(): THREE.MeshStandardMaterial[] {
+    return Object.values(this.propMaterials);
+  }
+
+  private terrainMaterialFor(materialId: string): { top: THREE.MeshStandardMaterial; side: THREE.MeshStandardMaterial } {
+    const existing = this.terrainMaterials[materialId];
+    if (existing) {
+      return existing;
+    }
+    const definition = this.environmentMaterials.find((material) => material.id === materialId) ?? fallbackMaterial;
+    const fallback = {
+      top: this.createMappedMaterial(definition.topColor, definition.topImageUrl, 0.72),
+      side: this.createMappedMaterial(definition.sideColor, definition.sideImageUrl, 0.86)
+    };
+    this.terrainMaterials[materialId] = fallback;
+    return fallback;
+  }
+
+  private propDefinitionFor(propId: PropDefinitionId): PropDefinition {
+    return this.propDefinitions.find((propDefinition) => propDefinition.id === propId) ?? fallbackProp;
+  }
+
+  private propMaterialFor(propId: PropDefinitionId): THREE.MeshStandardMaterial {
+    const existing = this.propMaterials[propId];
+    if (existing) {
+      return existing;
+    }
+    const definition = this.propDefinitionFor(propId);
+    const fallback = this.createMappedMaterial(definition.color, definition.textureUrl, 0.82);
+    this.propMaterials[propId] = fallback;
+    return fallback;
+  }
+
   private materialFor(section: SectionName, classId: ClassId): THREE.MeshStandardMaterial {
     const existing = this.classMaterials[section][classId];
     if (existing) {
@@ -184,9 +333,14 @@ export class LevelScene {
       return;
     }
 
+    this.applyEnvironment(this.level.environment);
+    this.addGroundSurface(this.level);
     this.addTerrain(this.level);
     for (const obstacle of this.level.obstacles) {
       this.addObstacle(this.level, obstacle);
+    }
+    for (const prop of this.level.surroundings ?? []) {
+      this.addSurroundingProp(this.level, prop);
     }
     for (const unit of this.level.units) {
       this.addUnit(this.level, unit);
@@ -225,7 +379,11 @@ export class LevelScene {
   }
 
   private isSharedMaterial(material: THREE.Material): boolean {
-    return Object.values(this.classMaterials).some((section) => Object.values(section).includes(material as THREE.MeshStandardMaterial));
+    return (
+      Object.values(this.classMaterials).some((section) => Object.values(section).includes(material as THREE.MeshStandardMaterial)) ||
+      this.collectTerrainMaterials().includes(material as THREE.MeshStandardMaterial) ||
+      this.collectPropMaterials().includes(material as THREE.MeshStandardMaterial)
+    );
   }
 
   private disposeMaterial(material: THREE.Material): void {
@@ -234,18 +392,54 @@ export class LevelScene {
     material.dispose();
   }
 
+  private applyEnvironment(environment: EnvironmentSettings | undefined): void {
+    const resolved = { ...fallbackEnvironment, ...(environment ?? {}) };
+    this.scene.background = new THREE.Color(resolved.skyColor);
+    this.scene.fog = new THREE.Fog(resolved.fogColor, 13, 32);
+    this.hemiLight.intensity = resolved.ambientIntensity;
+    this.sunLight.intensity = resolved.sunIntensity;
+    this.fillLight.intensity = resolved.sunIntensity * 0.32;
+  }
+
+  private createGroundMaterial(environment: EnvironmentSettings | undefined): THREE.MeshStandardMaterial {
+    const resolved = { ...fallbackEnvironment, ...(environment ?? {}) };
+    if (!resolved.groundTextureUrl) {
+      return new THREE.MeshStandardMaterial({ color: resolved.groundColor, roughness: 0.92 });
+    }
+    const texture = this.textureLoader.load(resolved.groundTextureUrl);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.magFilter = THREE.NearestFilter;
+    texture.minFilter = THREE.NearestFilter;
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.RepeatWrapping;
+    texture.repeat.set(10, 10);
+    return new THREE.MeshStandardMaterial({ color: "#ffffff", map: texture, roughness: 0.92 });
+  }
+
+  private addGroundSurface(level: LevelData): void {
+    const mesh = new THREE.Mesh(
+      new THREE.PlaneGeometry((level.width + 8) * tileSize, (level.depth + 8) * tileSize),
+      this.createGroundMaterial(level.environment)
+    );
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.position.y = -0.035;
+    mesh.receiveShadow = true;
+    this.root.add(mesh);
+  }
+
   private addTerrain(level: LevelData): void {
     for (let z = 0; z < level.depth; z += 1) {
       for (let x = 0; x < level.width; x += 1) {
         const tile = level.tiles[z][x];
         const height = baseTileHeight + tile.height * heightStep;
+        const terrainMaterials = this.terrainMaterialFor(tile.terrain);
         const materials = [
-          new THREE.MeshStandardMaterial({ color: "#6f765d", roughness: 0.86 }),
-          new THREE.MeshStandardMaterial({ color: "#6f765d", roughness: 0.86 }),
-          new THREE.MeshStandardMaterial({ color: terrainColors[tile.terrain], roughness: 0.72 }),
+          terrainMaterials.side,
+          terrainMaterials.side,
+          terrainMaterials.top,
           new THREE.MeshStandardMaterial({ color: "#49392c", roughness: 0.96 }),
-          new THREE.MeshStandardMaterial({ color: "#6f765d", roughness: 0.86 }),
-          new THREE.MeshStandardMaterial({ color: "#6f765d", roughness: 0.86 })
+          terrainMaterials.side,
+          terrainMaterials.side
         ];
         const mesh = new THREE.Mesh(new THREE.BoxGeometry(tileSize * 0.96, height, tileSize * 0.96), materials);
         mesh.position.copy(this.worldPosition(level, x, z, height / 2));
@@ -260,18 +454,36 @@ export class LevelScene {
 
   private addObstacle(level: LevelData, obstacle: ObstacleData): void {
     const baseY = this.tileTopY(level, obstacle.x, obstacle.z);
-    const height = obstacle.type === "tower" ? 1.2 : obstacle.type === "wall" ? 0.9 : 0.62;
-    const color = obstacle.type === "tree" ? "#3e8a58" : obstacle.type === "cover" ? "#776a50" : "#6c716a";
-    const mesh = new THREE.Mesh(
-      new THREE.BoxGeometry(obstacle.type === "cover" ? 0.9 : 0.75, height, obstacle.type === "cover" ? 0.35 : 0.75),
-      new THREE.MeshStandardMaterial({ color, roughness: 0.82 })
-    );
-    mesh.position.copy(this.worldPosition(level, obstacle.x, obstacle.z, baseY + height / 2));
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
-    mesh.userData = { x: obstacle.x, z: obstacle.z };
+    const mesh = this.createPropMesh(obstacle.type, 1);
+    mesh.position.copy(this.worldPosition(level, obstacle.x, obstacle.z, baseY + mesh.userData.height / 2));
+    mesh.userData = { ...mesh.userData, x: obstacle.x, z: obstacle.z };
     this.root.add(mesh);
     this.clickable.push(mesh);
+  }
+
+  private addSurroundingProp(level: LevelData, prop: SurroundingPropData): void {
+    const mesh = this.createPropMesh(prop.type, prop.scale);
+    mesh.position.copy(this.worldPosition(level, prop.x, prop.z, mesh.userData.height / 2));
+    mesh.rotation.y = prop.rotation;
+    this.root.add(mesh);
+  }
+
+  private createPropMesh(propId: PropDefinitionId, scale: number): THREE.Mesh {
+    const definition = this.propDefinitionFor(propId);
+    const resolvedScale = Math.max(0.2, Math.min(3, scale || 1));
+    const height = Math.max(0.1, definition.height * resolvedScale);
+    const mesh = new THREE.Mesh(
+      new THREE.BoxGeometry(
+        Math.max(0.1, definition.width * resolvedScale),
+        height,
+        Math.max(0.1, definition.depth * resolvedScale)
+      ),
+      this.propMaterialFor(definition.id)
+    );
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    mesh.userData = { propId: definition.id, height };
+    return mesh;
   }
 
   private addUnit(level: LevelData, unit: UnitData): void {

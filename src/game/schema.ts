@@ -1,9 +1,11 @@
-export type TerrainType = "grass" | "stone" | "sand" | "water";
-export type ObstacleType = "wall" | "tower" | "tree" | "cover";
+export type TerrainType = string;
+export type ObstacleType = string;
 export type Team = "player" | "enemy";
 export type ClassId = string;
 export type ClassName = ClassId;
 export type SectionName = "head" | "body" | "legs";
+export type EnvironmentMaterialId = string;
+export type PropDefinitionId = string;
 
 export interface ClassSectionStats {
   attack: number;
@@ -26,16 +28,62 @@ export interface ClassDefinition {
   sections: Record<SectionName, ClassSectionDefinition>;
 }
 
+export interface EnvironmentMaterialDefinition {
+  id: EnvironmentMaterialId;
+  name: string;
+  topColor: string;
+  sideColor: string;
+  topImageUrl: string;
+  sideImageUrl: string;
+  topRule: string;
+  sideRule: string;
+  movementCost: number;
+  blocksLineOfSight: boolean;
+}
+
+export interface PropDefinition {
+  id: PropDefinitionId;
+  name: string;
+  role: "blocker" | "cover" | "decor";
+  color: string;
+  textureUrl: string;
+  width: number;
+  height: number;
+  depth: number;
+  blocksMovement: boolean;
+  blocksLineOfSight: boolean;
+  coverBonus: number;
+  notes: string[];
+}
+
+export interface EnvironmentSettings {
+  skyColor: string;
+  fogColor: string;
+  groundColor: string;
+  groundTextureUrl: string;
+  ambientIntensity: number;
+  sunIntensity: number;
+}
+
 export interface TileData {
   height: number;
-  terrain: TerrainType;
+  terrain: EnvironmentMaterialId;
 }
 
 export interface ObstacleData {
   id: string;
-  type: ObstacleType;
+  type: PropDefinitionId;
   x: number;
   z: number;
+}
+
+export interface SurroundingPropData {
+  id: string;
+  type: PropDefinitionId;
+  x: number;
+  z: number;
+  rotation: number;
+  scale: number;
 }
 
 export interface UnitFaceLayout {
@@ -75,8 +123,10 @@ export interface LevelData {
   name: string;
   width: number;
   depth: number;
+  environment: EnvironmentSettings;
   tiles: TileData[][];
   obstacles: ObstacleData[];
+  surroundings: SurroundingPropData[];
   units: UnitData[];
   objectives: LevelObjective[];
   links: LevelLink[];

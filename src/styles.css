@@ -63,6 +63,12 @@ input[type="file"] {
   font-size: 11px;
 }
 
+input[type="checkbox"] {
+  width: 16px;
+  min-height: 16px;
+  accent-color: var(--accent);
+}
+
 button {
   cursor: pointer;
   font-size: 12px;
@@ -250,6 +256,47 @@ textarea {
   object-fit: cover;
   image-rendering: pixelated;
   background: rgba(255, 255, 255, 0.08);
+}
+
+.asset-pair {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+
+.asset-preview-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid rgba(238, 247, 239, 0.12);
+  border-radius: 7px;
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.asset-preview-head strong {
+  font-size: 12px;
+}
+
+.asset-preview-head img {
+  width: 46px;
+  height: 46px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 6px;
+  object-fit: cover;
+  image-rendering: pixelated;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.check-row {
+  display: grid;
+  grid-template-columns: 18px 1fr;
+  gap: 8px;
+  align-items: center;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
 }
 
 .stat-grid {

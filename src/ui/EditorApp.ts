@@ -1,4 +1,12 @@
-import { defaultCampaign, defaultClassDefinitions, defaultLevels, unitTemplates } from "../game/content";
+import {
+  defaultCampaign,
+  defaultClassDefinitions,
+  defaultEnvironmentMaterials,
+  defaultEnvironmentSettings,
+  defaultLevels,
+  defaultPropDefinitions,
+  unitTemplates
+} from "../game/content";
 import {
   changeHeight,
   cloneLevel,
@@ -17,8 +25,13 @@ import type {
   ClassId,
   ClassSectionStats,
   EditorTool,
+  EnvironmentMaterialDefinition,
+  EnvironmentMaterialId,
+  EnvironmentSettings,
   LevelData,
   ObstacleType,
+  PropDefinition,
+  PropDefinitionId,
   SectionName,
   Team,
   TerrainType,
@@ -38,6 +51,8 @@ const statFields: Array<{ key: keyof ClassSectionStats; label: string }> = [
 ];
 const templatesStorageKey = "craft-heroes-unit-templates";
 const classesStorageKey = "craft-heroes-class-definitions";
+const materialsStorageKey = "craft-heroes-environment-materials";
+const propsStorageKey = "craft-heroes-prop-definitions";
 
 function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (character) => {
@@ -68,6 +83,24 @@ function classIdFromName(name: string): string {
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
   return slug || `class-${Date.now()}`;
+}
+
+function materialIdFromName(name: string): string {
+  const slug = name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return slug || `material-${Date.now()}`;
+}
+
+function propIdFromName(name: string): string {
+  const slug = name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return slug || `prop-${Date.now()}`;
 }
 
 function readStoredJson<T>(key: string): T | undefined {
@@ -125,11 +158,103 @@ function mergeClassDefinitions(...sets: ClassDefinition[][]): ClassDefinition[] 
   return [...byId.values()];
 }
 
+function normalizeEnvironment(environment: Partial<EnvironmentSettings> | undefined): EnvironmentSettings {
+  return {
+    skyColor: environment?.skyColor || defaultEnvironmentSettings.skyColor,
+    fogColor: environment?.fogColor || defaultEnvironmentSettings.fogColor,
+    groundColor: environment?.groundColor || defaultEnvironmentSettings.groundColor,
+    groundTextureUrl: environment?.groundTextureUrl || "",
+    ambientIntensity: Math.max(0, Math.min(4, numberOrFallback(environment?.ambientIntensity, defaultEnvironmentSettings.ambientIntensity))),
+    sunIntensity: Math.max(0, Math.min(6, numberOrFallback(environment?.sunIntensity, defaultEnvironmentSettings.sunIntensity)))
+  };
+}
+
+function normalizeMaterialDefinition(material: Partial<EnvironmentMaterialDefinition>): EnvironmentMaterialDefinition {
+  const fallback = defaultEnvironmentMaterials[0];
+  const id = material.id || materialIdFromName(material.name || fallback.name);
+  return {
+    id,
+    name: material.name || id,
+    topColor: material.topColor || fallback.topColor,
+    sideColor: material.sideColor || fallback.sideColor,
+    topImageUrl: typeof material.topImageUrl === "string" ? material.topImageUrl : "",
+    sideImageUrl: typeof material.sideImageUrl === "string" ? material.sideImageUrl : "",
+    topRule: material.topRule || "",
+    sideRule: material.sideRule || "",
+    movementCost: Math.max(1, Math.min(9, numberOrFallback(material.movementCost, 1))),
+    blocksLineOfSight: Boolean(material.blocksLineOfSight)
+  };
+}
+
+function mergeMaterialDefinitions(...sets: EnvironmentMaterialDefinition[][]): EnvironmentMaterialDefinition[] {
+  const byId = new Map<string, EnvironmentMaterialDefinition>();
+  for (const set of sets) {
+    for (const material of set) {
+      const normalized = normalizeMaterialDefinition(material);
+      byId.set(normalized.id, normalized);
+    }
+  }
+  return [...byId.values()];
+}
+
+function normalizePropDefinition(prop: Partial<PropDefinition>): PropDefinition {
+  const fallback = defaultPropDefinitions[0];
+  const id = prop.id || propIdFromName(prop.name || fallback.name);
+  const role = prop.role === "cover" || prop.role === "decor" || prop.role === "blocker" ? prop.role : fallback.role;
+  return {
+    id,
+    name: prop.name || id,
+    role,
+    color: prop.color || fallback.color,
+    textureUrl: typeof prop.textureUrl === "string" ? prop.textureUrl : "",
+    width: Math.max(0.1, Math.min(3, numberOrFallback(prop.width, fallback.width))),
+    height: Math.max(0.1, Math.min(4, numberOrFallback(prop.height, fallback.height))),
+    depth: Math.max(0.1, Math.min(3, numberOrFallback(prop.depth, fallback.depth))),
+    blocksMovement: prop.blocksMovement ?? role !== "decor",
+    blocksLineOfSight: Boolean(prop.blocksLineOfSight),
+    coverBonus: Math.max(0, Math.min(9, numberOrFallback(prop.coverBonus, role === "cover" ? 1 : 0))),
+    notes: Array.isArray(prop.notes) ? prop.notes.map(String).filter(Boolean) : []
+  };
+}
+
+function mergePropDefinitions(...sets: PropDefinition[][]): PropDefinition[] {
+  const byId = new Map<string, PropDefinition>();
+  for (const set of sets) {
+    for (const prop of set) {
+      const normalized = normalizePropDefinition(prop);
+      byId.set(normalized.id, normalized);
+    }
+  }
+  return [...byId.values()];
+}
+
+function normalizeLevelData(level: LevelData): LevelData {
+  return {
+    ...level,
+    environment: normalizeEnvironment(level.environment),
+    surroundings: Array.isArray(level.surroundings) ? level.surroundings : []
+  };
+}
+
 function initialClassDefinitions(): ClassDefinition[] {
   const stored = readStoredJson<ClassDefinition[]>(classesStorageKey);
   return Array.isArray(stored) && stored.length > 0
     ? mergeClassDefinitions(defaultClassDefinitions, stored)
     : defaultClassDefinitions.map((classDefinition) => structuredClone(classDefinition));
+}
+
+function initialEnvironmentMaterials(): EnvironmentMaterialDefinition[] {
+  const stored = readStoredJson<EnvironmentMaterialDefinition[]>(materialsStorageKey);
+  return Array.isArray(stored) && stored.length > 0
+    ? mergeMaterialDefinitions(defaultEnvironmentMaterials, stored)
+    : defaultEnvironmentMaterials.map((material) => structuredClone(material));
+}
+
+function initialPropDefinitions(): PropDefinition[] {
+  const stored = readStoredJson<PropDefinition[]>(propsStorageKey);
+  return Array.isArray(stored) && stored.length > 0
+    ? mergePropDefinitions(defaultPropDefinitions, stored)
+    : defaultPropDefinitions.map((prop) => structuredClone(prop));
 }
 
 function initialTemplates(): UnitTemplate[] {
@@ -167,15 +292,17 @@ export class EditorApp {
   private readonly canvas: HTMLCanvasElement;
   private readonly scene: LevelScene;
   private readonly panel: HTMLElement;
-  private levels: LevelData[] = defaultLevels.map(cloneLevel);
+  private levels: LevelData[] = defaultLevels.map((level) => normalizeLevelData(cloneLevel(level)));
   private campaign: CampaignData = structuredClone(defaultCampaign);
   private templates: UnitTemplate[] = initialTemplates();
   private classDefinitions: ClassDefinition[] = initialClassDefinitions();
+  private environmentMaterials: EnvironmentMaterialDefinition[] = initialEnvironmentMaterials();
+  private propDefinitions: PropDefinition[] = initialPropDefinitions();
   private state: EditorState = {
     mode: "editor",
     tool: "select",
-    terrain: "grass",
-    obstacle: "wall",
+    terrain: this.environmentMaterials[0].id,
+    obstacle: this.propDefinitions[0].id,
     team: "enemy",
     templateId: this.templates[1]?.id ?? this.templates[0].id,
     classId: this.classDefinitions[0].id,
@@ -192,17 +319,18 @@ export class EditorApp {
     `;
     this.canvas = this.root.querySelector(".world-canvas") as HTMLCanvasElement;
     this.panel = this.root.querySelector(".editor-panel") as HTMLElement;
-    this.scene = new LevelScene(this.canvas, this.classDefinitions);
+    this.scene = new LevelScene(this.canvas, this.classDefinitions, this.environmentMaterials, this.propDefinitions);
     this.scene.onTileClick((coord) => this.handleTileClick(coord));
     this.render(true);
   }
 
   private currentLevel(): LevelData {
-    return this.levels.find((level) => level.id === this.state.levelId) ?? this.levels[0];
+    return normalizeLevelData(this.levels.find((level) => level.id === this.state.levelId) ?? this.levels[0]);
   }
 
   private setCurrentLevel(level: LevelData): void {
-    this.levels = this.levels.map((candidate) => (candidate.id === level.id ? level : candidate));
+    const normalized = normalizeLevelData(level);
+    this.levels = this.levels.map((candidate) => (candidate.id === normalized.id ? normalized : candidate));
   }
 
   private selectedTemplate(): UnitTemplate {
@@ -211,6 +339,14 @@ export class EditorApp {
 
   private selectedClass(): ClassDefinition {
     return this.classDefinitions.find((classDefinition) => classDefinition.id === this.state.classId) ?? this.classDefinitions[0];
+  }
+
+  private selectedMaterial(): EnvironmentMaterialDefinition {
+    return this.environmentMaterials.find((material) => material.id === this.state.terrain) ?? this.environmentMaterials[0];
+  }
+
+  private selectedProp(): PropDefinition {
+    return this.propDefinitions.find((prop) => prop.id === this.state.obstacle) ?? this.propDefinitions[0];
   }
 
   private uniqueTemplateId(name: string): string {
@@ -235,12 +371,46 @@ export class EditorApp {
     return id;
   }
 
+  private uniqueMaterialId(name: string): string {
+    const baseId = materialIdFromName(name);
+    let id = baseId;
+    let index = 2;
+    while (this.environmentMaterials.some((material) => material.id === id)) {
+      id = `${baseId}-${index}`;
+      index += 1;
+    }
+    return id;
+  }
+
+  private uniquePropId(name: string): string {
+    const baseId = propIdFromName(name);
+    let id = baseId;
+    let index = 2;
+    while (this.propDefinitions.some((prop) => prop.id === id)) {
+      id = `${baseId}-${index}`;
+      index += 1;
+    }
+    return id;
+  }
+
   private classOptions(selectedId: ClassId): string {
     return this.classDefinitions
       .map(
         (classDefinition) =>
           `<option value="${escapeHtml(classDefinition.id)}" ${classDefinition.id === selectedId ? "selected" : ""}>${escapeHtml(classDefinition.name)}</option>`
       )
+      .join("");
+  }
+
+  private materialOptions(selectedId: EnvironmentMaterialId): string {
+    return this.environmentMaterials
+      .map((material) => `<option value="${escapeHtml(material.id)}" ${material.id === selectedId ? "selected" : ""}>${escapeHtml(material.name)}</option>`)
+      .join("");
+  }
+
+  private propOptions(selectedId: PropDefinitionId): string {
+    return this.propDefinitions
+      .map((prop) => `<option value="${escapeHtml(prop.id)}" ${prop.id === selectedId ? "selected" : ""}>${escapeHtml(prop.name)}</option>`)
       .join("");
   }
 
@@ -288,6 +458,82 @@ export class EditorApp {
   private replaceClassDefinition(nextClass: ClassDefinition): void {
     this.classDefinitions = this.classDefinitions.map((classDefinition) => (classDefinition.id === nextClass.id ? nextClass : classDefinition));
     this.scene.setClassDefinitions(this.classDefinitions);
+  }
+
+  private readMaterialDraft(materialId = this.state.terrain): EnvironmentMaterialDefinition {
+    const fallback = this.selectedMaterial();
+    const nameInput = this.panel.querySelector<HTMLInputElement>("[data-material='name']");
+    const topColorInput = this.panel.querySelector<HTMLInputElement>("[data-material='topColor']");
+    const sideColorInput = this.panel.querySelector<HTMLInputElement>("[data-material='sideColor']");
+    const movementInput = this.panel.querySelector<HTMLInputElement>("[data-material='movementCost']");
+    const lineOfSightInput = this.panel.querySelector<HTMLInputElement>("[data-material='blocksLineOfSight']");
+    const topRuleInput = this.panel.querySelector<HTMLInputElement>("[data-material='topRule']");
+    const sideRuleInput = this.panel.querySelector<HTMLInputElement>("[data-material='sideRule']");
+    return normalizeMaterialDefinition({
+      ...fallback,
+      id: materialId,
+      name: nameInput?.value.trim() || fallback.name,
+      topColor: topColorInput?.value || fallback.topColor,
+      sideColor: sideColorInput?.value || fallback.sideColor,
+      topRule: topRuleInput?.value.trim() || fallback.topRule,
+      sideRule: sideRuleInput?.value.trim() || fallback.sideRule,
+      movementCost: numberOrFallback(movementInput?.value, fallback.movementCost),
+      blocksLineOfSight: Boolean(lineOfSightInput?.checked)
+    });
+  }
+
+  private replaceMaterialDefinition(nextMaterial: EnvironmentMaterialDefinition): void {
+    this.environmentMaterials = this.environmentMaterials.map((material) => (material.id === nextMaterial.id ? nextMaterial : material));
+    this.scene.setEnvironmentMaterials(this.environmentMaterials);
+  }
+
+  private readPropDraft(propId = this.state.obstacle): PropDefinition {
+    const fallback = this.selectedProp();
+    const nameInput = this.panel.querySelector<HTMLInputElement>("[data-prop='name']");
+    const roleInput = this.panel.querySelector<HTMLSelectElement>("[data-prop='role']");
+    const colorInput = this.panel.querySelector<HTMLInputElement>("[data-prop='color']");
+    const widthInput = this.panel.querySelector<HTMLInputElement>("[data-prop='width']");
+    const heightInput = this.panel.querySelector<HTMLInputElement>("[data-prop='height']");
+    const depthInput = this.panel.querySelector<HTMLInputElement>("[data-prop='depth']");
+    const blocksMovementInput = this.panel.querySelector<HTMLInputElement>("[data-prop='blocksMovement']");
+    const blocksLineOfSightInput = this.panel.querySelector<HTMLInputElement>("[data-prop='blocksLineOfSight']");
+    const coverBonusInput = this.panel.querySelector<HTMLInputElement>("[data-prop='coverBonus']");
+    const notesInput = this.panel.querySelector<HTMLInputElement>("[data-prop='notes']");
+    return normalizePropDefinition({
+      ...fallback,
+      id: propId,
+      name: nameInput?.value.trim() || fallback.name,
+      role: (roleInput?.value as PropDefinition["role"] | undefined) ?? fallback.role,
+      color: colorInput?.value || fallback.color,
+      width: numberOrFallback(widthInput?.value, fallback.width),
+      height: numberOrFallback(heightInput?.value, fallback.height),
+      depth: numberOrFallback(depthInput?.value, fallback.depth),
+      blocksMovement: Boolean(blocksMovementInput?.checked),
+      blocksLineOfSight: Boolean(blocksLineOfSightInput?.checked),
+      coverBonus: numberOrFallback(coverBonusInput?.value, fallback.coverBonus),
+      notes: textToConditions(notesInput?.value ?? conditionsToText(fallback.notes))
+    });
+  }
+
+  private replacePropDefinition(nextProp: PropDefinition): void {
+    this.propDefinitions = this.propDefinitions.map((prop) => (prop.id === nextProp.id ? nextProp : prop));
+    this.scene.setPropDefinitions(this.propDefinitions);
+  }
+
+  private readEnvironmentDraft(level: LevelData): EnvironmentSettings {
+    const skyInput = this.panel.querySelector<HTMLInputElement>("[data-environment='skyColor']");
+    const fogInput = this.panel.querySelector<HTMLInputElement>("[data-environment='fogColor']");
+    const groundInput = this.panel.querySelector<HTMLInputElement>("[data-environment='groundColor']");
+    const ambientInput = this.panel.querySelector<HTMLInputElement>("[data-environment='ambientIntensity']");
+    const sunInput = this.panel.querySelector<HTMLInputElement>("[data-environment='sunIntensity']");
+    return normalizeEnvironment({
+      ...level.environment,
+      skyColor: skyInput?.value || level.environment.skyColor,
+      fogColor: fogInput?.value || level.environment.fogColor,
+      groundColor: groundInput?.value || level.environment.groundColor,
+      ambientIntensity: numberOrFallback(ambientInput?.value, level.environment.ambientIntensity),
+      sunIntensity: numberOrFallback(sunInput?.value, level.environment.sunIntensity)
+    });
   }
 
   private applyLevelSize(): void {
@@ -347,7 +593,20 @@ export class EditorApp {
     const warnings = validateLevel(level);
     const currentTemplate = this.selectedTemplate();
     const currentClass = this.selectedClass();
-    const json = JSON.stringify({ campaign: this.campaign, level, templates: this.templates, classes: this.classDefinitions }, null, 2);
+    const currentMaterial = this.selectedMaterial();
+    const currentProp = this.selectedProp();
+    const json = JSON.stringify(
+      {
+        campaign: this.campaign,
+        level,
+        templates: this.templates,
+        classes: this.classDefinitions,
+        terrainMaterials: this.environmentMaterials,
+        props: this.propDefinitions
+      },
+      null,
+      2
+    );
     this.panel.innerHTML = `
       <div class="panel-head">
         <div>
@@ -395,17 +654,13 @@ export class EditorApp {
         <label class="field">
           <span>Terrain</span>
           <select data-field="terrain">
-            ${(["grass", "stone", "sand", "water"] as TerrainType[])
-              .map((terrain) => `<option value="${terrain}" ${terrain === this.state.terrain ? "selected" : ""}>${terrain}</option>`)
-              .join("")}
+            ${this.materialOptions(this.state.terrain)}
           </select>
         </label>
         <label class="field">
-          <span>Obstacle</span>
+          <span>Prop / Blocker</span>
           <select data-field="obstacle">
-            ${(["wall", "tower", "tree", "cover"] as ObstacleType[])
-              .map((obstacle) => `<option value="${obstacle}" ${obstacle === this.state.obstacle ? "selected" : ""}>${obstacle}</option>`)
-              .join("")}
+            ${this.propOptions(this.state.obstacle)}
           </select>
         </label>
         <label class="field">
@@ -421,6 +676,205 @@ export class EditorApp {
           </select>
         </label>
       </div>
+
+      <section class="control-section">
+        <div class="section-title">
+          <strong>Environment</strong>
+          <span>Sky, fog, ground, and decorative props around the board.</span>
+        </div>
+        <div class="compact-grid">
+          <label class="field">
+            <span>Sky</span>
+            <input data-environment="skyColor" type="color" value="${escapeHtml(level.environment.skyColor)}">
+          </label>
+          <label class="field">
+            <span>Fog</span>
+            <input data-environment="fogColor" type="color" value="${escapeHtml(level.environment.fogColor)}">
+          </label>
+          <label class="field">
+            <span>Ground</span>
+            <input data-environment="groundColor" type="color" value="${escapeHtml(level.environment.groundColor)}">
+          </label>
+          <label class="field">
+            <span>Ground Texture</span>
+            <input data-ground-texture type="file" accept="image/*">
+          </label>
+          <label class="field">
+            <span>Ambient</span>
+            <input data-environment="ambientIntensity" type="number" min="0" max="4" step="0.1" value="${level.environment.ambientIntensity}">
+          </label>
+          <label class="field">
+            <span>Sun</span>
+            <input data-environment="sunIntensity" type="number" min="0" max="6" step="0.1" value="${level.environment.sunIntensity}">
+          </label>
+        </div>
+        <div class="button-row two">
+          <button data-action="update-environment">Update Environment</button>
+          <button data-action="clear-ground-texture">Clear Ground Texture</button>
+        </div>
+        <div class="compact-grid">
+          <label class="field">
+            <span>Surround X</span>
+            <input data-surrounding="x" type="number" step="1" value="-2">
+          </label>
+          <label class="field">
+            <span>Surround Z</span>
+            <input data-surrounding="z" type="number" step="1" value="0">
+          </label>
+          <label class="field">
+            <span>Rotation</span>
+            <input data-surrounding="rotation" type="number" min="0" max="6.28" step="0.1" value="0">
+          </label>
+          <label class="field">
+            <span>Scale</span>
+            <input data-surrounding="scale" type="number" min="0.2" max="3" step="0.1" value="1">
+          </label>
+        </div>
+        <div class="button-row two">
+          <button data-action="add-surrounding">Add Surrounding Prop</button>
+          <button data-action="clear-surroundings">Clear Surroundings</button>
+        </div>
+      </section>
+
+      <section class="control-section">
+        <div class="section-title">
+          <strong>Terrain Materials</strong>
+          <span>Define tile top art, side art, and placement rules.</span>
+        </div>
+        <label class="field">
+          <span>Material</span>
+          <select data-field="terrain">
+            ${this.materialOptions(this.state.terrain)}
+          </select>
+        </label>
+        <div class="compact-grid">
+          <label class="field">
+            <span>Name</span>
+            <input data-material="name" type="text" value="${escapeHtml(currentMaterial.name)}">
+          </label>
+          <label class="field">
+            <span>Move Cost</span>
+            <input data-material="movementCost" type="number" min="1" max="9" step="1" value="${currentMaterial.movementCost}">
+          </label>
+          <label class="field">
+            <span>Top Color</span>
+            <input data-material="topColor" type="color" value="${escapeHtml(currentMaterial.topColor)}">
+          </label>
+          <label class="field">
+            <span>Side Color</span>
+            <input data-material="sideColor" type="color" value="${escapeHtml(currentMaterial.sideColor)}">
+          </label>
+        </div>
+        <div class="asset-pair">
+          <div class="asset-preview-head">
+            <strong>Top</strong>
+            <img src="${escapeHtml(currentMaterial.topImageUrl)}" alt="">
+          </div>
+          <div class="asset-preview-head">
+            <strong>Sides</strong>
+            <img src="${escapeHtml(currentMaterial.sideImageUrl)}" alt="">
+          </div>
+        </div>
+        <div class="compact-grid">
+          <label class="field">
+            <span>Top Texture</span>
+            <input data-material-image="top" type="file" accept="image/*">
+          </label>
+          <label class="field">
+            <span>Side Texture</span>
+            <input data-material-image="side" type="file" accept="image/*">
+          </label>
+        </div>
+        <label class="field">
+          <span>Top Rule</span>
+          <input data-material="topRule" type="text" value="${escapeHtml(currentMaterial.topRule)}">
+        </label>
+        <label class="field">
+          <span>Side Rule</span>
+          <input data-material="sideRule" type="text" value="${escapeHtml(currentMaterial.sideRule)}">
+        </label>
+        <label class="check-row">
+          <input data-material="blocksLineOfSight" type="checkbox" ${currentMaterial.blocksLineOfSight ? "checked" : ""}>
+          <span>Blocks line of sight when this material is raised.</span>
+        </label>
+        <div class="button-row two">
+          <button data-action="update-material">Update Material</button>
+          <button data-action="save-material-new">Save As New Material</button>
+        </div>
+      </section>
+
+      <section class="control-section">
+        <div class="section-title">
+          <strong>Props / Blockers</strong>
+          <span>Create placeable blockers, cover, and decorative environment props.</span>
+        </div>
+        <label class="field">
+          <span>Prop</span>
+          <select data-field="obstacle">
+            ${this.propOptions(this.state.obstacle)}
+          </select>
+        </label>
+        <div class="compact-grid">
+          <label class="field">
+            <span>Name</span>
+            <input data-prop="name" type="text" value="${escapeHtml(currentProp.name)}">
+          </label>
+          <label class="field">
+            <span>Role</span>
+            <select data-prop="role">
+              ${(["blocker", "cover", "decor"] as PropDefinition["role"][])
+                .map((role) => `<option value="${role}" ${currentProp.role === role ? "selected" : ""}>${role}</option>`)
+                .join("")}
+            </select>
+          </label>
+          <label class="field">
+            <span>Color</span>
+            <input data-prop="color" type="color" value="${escapeHtml(currentProp.color)}">
+          </label>
+          <label class="field">
+            <span>Texture</span>
+            <input data-prop-image type="file" accept="image/*">
+          </label>
+        </div>
+        <div class="asset-preview-head">
+          <strong>Texture Preview</strong>
+          <img src="${escapeHtml(currentProp.textureUrl)}" alt="">
+        </div>
+        <div class="stat-grid">
+          <label>
+            <span>W</span>
+            <input data-prop="width" type="number" min="0.1" max="3" step="0.05" value="${currentProp.width}">
+          </label>
+          <label>
+            <span>H</span>
+            <input data-prop="height" type="number" min="0.1" max="4" step="0.05" value="${currentProp.height}">
+          </label>
+          <label>
+            <span>D</span>
+            <input data-prop="depth" type="number" min="0.1" max="3" step="0.05" value="${currentProp.depth}">
+          </label>
+          <label>
+            <span>COV</span>
+            <input data-prop="coverBonus" type="number" min="0" max="9" step="1" value="${currentProp.coverBonus}">
+          </label>
+        </div>
+        <label class="check-row">
+          <input data-prop="blocksMovement" type="checkbox" ${currentProp.blocksMovement ? "checked" : ""}>
+          <span>Blocks movement.</span>
+        </label>
+        <label class="check-row">
+          <input data-prop="blocksLineOfSight" type="checkbox" ${currentProp.blocksLineOfSight ? "checked" : ""}>
+          <span>Blocks line of sight.</span>
+        </label>
+        <label class="field">
+          <span>Notes</span>
+          <input data-prop="notes" type="text" value="${escapeHtml(conditionsToText(currentProp.notes))}">
+        </label>
+        <div class="button-row two">
+          <button data-action="update-prop">Update Prop</button>
+          <button data-action="save-prop-new">Save As New Prop</button>
+        </div>
+      </section>
 
       <section class="control-section">
         <div class="section-title">
@@ -530,7 +984,7 @@ export class EditorApp {
 
       <div class="level-card">
         <strong>${level.name}</strong>
-        <span>${level.width} x ${level.depth} board / ${level.units.length} units / ${level.obstacles.length} obstacles</span>
+        <span>${level.width} x ${level.depth} board / ${level.units.length} units / ${level.obstacles.length} blockers / ${level.surroundings.length} surroundings</span>
         <span>Next: ${level.links.map((link) => link.to).join(", ") || "campaign end"}</span>
       </div>
 
@@ -584,6 +1038,18 @@ export class EditorApp {
       input.addEventListener("change", () => this.handleClassImageUpload(input));
     });
 
+    this.panel.querySelectorAll<HTMLInputElement>("[data-material-image]").forEach((input) => {
+      input.addEventListener("change", () => this.handleMaterialImageUpload(input));
+    });
+
+    this.panel.querySelectorAll<HTMLInputElement>("[data-prop-image]").forEach((input) => {
+      input.addEventListener("change", () => this.handlePropImageUpload(input));
+    });
+
+    this.panel.querySelectorAll<HTMLInputElement>("[data-ground-texture]").forEach((input) => {
+      input.addEventListener("change", () => this.handleGroundTextureUpload(input));
+    });
+
     this.panel.querySelectorAll<HTMLButtonElement>("[data-action]").forEach((button) => {
       button.addEventListener("click", () => this.handleAction(button.dataset.action ?? ""));
     });
@@ -617,6 +1083,87 @@ export class EditorApp {
     });
     reader.addEventListener("error", () => {
       this.flash("Class image upload failed.");
+    });
+    reader.readAsDataURL(file);
+  }
+
+  private handleMaterialImageUpload(input: HTMLInputElement): void {
+    const file = input.files?.[0];
+    const target = input.dataset.materialImage;
+    if (!file || (target !== "top" && target !== "side")) {
+      return;
+    }
+    if (!file.type.startsWith("image/")) {
+      this.flash("Terrain texture upload needs an image file.");
+      return;
+    }
+    const reader = new FileReader();
+    reader.addEventListener("load", () => {
+      const draft = this.readMaterialDraft();
+      if (target === "top") {
+        draft.topImageUrl = String(reader.result ?? "");
+      } else {
+        draft.sideImageUrl = String(reader.result ?? "");
+      }
+      this.replaceMaterialDefinition(draft);
+      this.updatePanel();
+      this.flash(`Updated ${draft.name} ${target} texture.`);
+    });
+    reader.addEventListener("error", () => {
+      this.flash("Terrain texture upload failed.");
+    });
+    reader.readAsDataURL(file);
+  }
+
+  private handlePropImageUpload(input: HTMLInputElement): void {
+    const file = input.files?.[0];
+    if (!file) {
+      return;
+    }
+    if (!file.type.startsWith("image/")) {
+      this.flash("Prop texture upload needs an image file.");
+      return;
+    }
+    const reader = new FileReader();
+    reader.addEventListener("load", () => {
+      const draft = this.readPropDraft();
+      draft.textureUrl = String(reader.result ?? "");
+      this.replacePropDefinition(draft);
+      this.updatePanel();
+      this.flash(`Updated ${draft.name} texture.`);
+    });
+    reader.addEventListener("error", () => {
+      this.flash("Prop texture upload failed.");
+    });
+    reader.readAsDataURL(file);
+  }
+
+  private handleGroundTextureUpload(input: HTMLInputElement): void {
+    const file = input.files?.[0];
+    if (!file) {
+      return;
+    }
+    if (!file.type.startsWith("image/")) {
+      this.flash("Ground texture upload needs an image file.");
+      return;
+    }
+    const reader = new FileReader();
+    reader.addEventListener("load", () => {
+      const level = this.currentLevel();
+      const next = {
+        ...level,
+        environment: {
+          ...this.readEnvironmentDraft(level),
+          groundTextureUrl: String(reader.result ?? "")
+        }
+      };
+      this.setCurrentLevel(next);
+      this.scene.setLevel(next);
+      this.updatePanel();
+      this.flash("Updated ground texture.");
+    });
+    reader.addEventListener("error", () => {
+      this.flash("Ground texture upload failed.");
     });
     reader.readAsDataURL(file);
   }
@@ -662,6 +1209,95 @@ export class EditorApp {
       this.scene.setClassDefinitions(this.classDefinitions);
       this.updatePanel();
       this.flash(`Created ${nextClass.name}.`);
+    } else if (action === "update-material") {
+      const draft = this.readMaterialDraft();
+      this.replaceMaterialDefinition(draft);
+      this.updatePanel();
+      this.flash(`Updated ${draft.name}.`);
+    } else if (action === "save-material-new") {
+      const draft = this.readMaterialDraft();
+      const nextMaterial = {
+        ...draft,
+        id: this.uniqueMaterialId(draft.name)
+      };
+      this.environmentMaterials.push(nextMaterial);
+      this.state.terrain = nextMaterial.id;
+      this.scene.setEnvironmentMaterials(this.environmentMaterials);
+      this.updatePanel();
+      this.flash(`Created ${nextMaterial.name}.`);
+    } else if (action === "update-prop") {
+      const draft = this.readPropDraft();
+      this.replacePropDefinition(draft);
+      this.updatePanel();
+      this.flash(`Updated ${draft.name}.`);
+    } else if (action === "save-prop-new") {
+      const draft = this.readPropDraft();
+      const nextProp = {
+        ...draft,
+        id: this.uniquePropId(draft.name)
+      };
+      this.propDefinitions.push(nextProp);
+      this.state.obstacle = nextProp.id;
+      this.scene.setPropDefinitions(this.propDefinitions);
+      this.updatePanel();
+      this.flash(`Created ${nextProp.name}.`);
+    } else if (action === "update-environment") {
+      const level = this.currentLevel();
+      const next = {
+        ...level,
+        environment: this.readEnvironmentDraft(level)
+      };
+      this.setCurrentLevel(next);
+      this.scene.setLevel(next);
+      this.updatePanel();
+      this.flash("Updated level environment.");
+    } else if (action === "clear-ground-texture") {
+      const level = this.currentLevel();
+      const next = {
+        ...level,
+        environment: {
+          ...this.readEnvironmentDraft(level),
+          groundTextureUrl: ""
+        }
+      };
+      this.setCurrentLevel(next);
+      this.scene.setLevel(next);
+      this.updatePanel();
+      this.flash("Cleared ground texture.");
+    } else if (action === "add-surrounding") {
+      const level = this.currentLevel();
+      const xInput = this.panel.querySelector<HTMLInputElement>("[data-surrounding='x']");
+      const zInput = this.panel.querySelector<HTMLInputElement>("[data-surrounding='z']");
+      const rotationInput = this.panel.querySelector<HTMLInputElement>("[data-surrounding='rotation']");
+      const scaleInput = this.panel.querySelector<HTMLInputElement>("[data-surrounding='scale']");
+      const next = {
+        ...level,
+        surroundings: [
+          ...level.surroundings,
+          {
+            id: `sur-${this.state.obstacle}-${Date.now()}`,
+            type: this.state.obstacle,
+            x: Math.round(numberOrFallback(xInput?.value, -2)),
+            z: Math.round(numberOrFallback(zInput?.value, 0)),
+            rotation: numberOrFallback(rotationInput?.value, 0),
+            scale: Math.max(0.2, Math.min(3, numberOrFallback(scaleInput?.value, 1)))
+          }
+        ]
+      };
+      this.setCurrentLevel(next);
+      this.scene.setLevel(next);
+      this.updatePanel();
+      this.flash(`Added surrounding ${this.selectedProp().name}.`);
+    } else if (action === "clear-surroundings") {
+      const level = this.currentLevel();
+      const next = {
+        ...level,
+        surroundings: []
+      };
+      this.setCurrentLevel(next);
+      this.scene.setLevel(next);
+      this.updatePanel();
+      this.flash("Cleared surrounding props.");
     } else if (action === "duplicate-level") {
       const source = this.currentLevel();
       const copy = cloneLevel(source);
@@ -678,17 +1314,25 @@ export class EditorApp {
       saveCampaign(this.campaign);
       localStorage.setItem(templatesStorageKey, JSON.stringify(this.templates, null, 2));
       localStorage.setItem(classesStorageKey, JSON.stringify(this.classDefinitions, null, 2));
-      this.flash("Saved campaign, level, builds, and classes to browser storage.");
+      localStorage.setItem(materialsStorageKey, JSON.stringify(this.environmentMaterials, null, 2));
+      localStorage.setItem(propsStorageKey, JSON.stringify(this.propDefinitions, null, 2));
+      this.flash("Saved campaign, level, builds, classes, materials, and props.");
     } else if (action === "load-sample") {
-      this.levels = defaultLevels.map(cloneLevel);
+      this.levels = defaultLevels.map((level) => normalizeLevelData(cloneLevel(level)));
       this.campaign = structuredClone(defaultCampaign);
       this.templates = unitTemplates.map((template) => structuredClone(template));
       this.classDefinitions = defaultClassDefinitions.map((classDefinition) => structuredClone(classDefinition));
+      this.environmentMaterials = defaultEnvironmentMaterials.map((material) => structuredClone(material));
+      this.propDefinitions = defaultPropDefinitions.map((prop) => structuredClone(prop));
       this.state.levelId = this.campaign.startLevel;
       this.state.templateId = this.templates[1]?.id ?? this.templates[0].id;
       this.state.classId = this.classDefinitions[0].id;
+      this.state.terrain = this.environmentMaterials[0].id;
+      this.state.obstacle = this.propDefinitions[0].id;
       this.state.selected = undefined;
       this.scene.setClassDefinitions(this.classDefinitions);
+      this.scene.setEnvironmentMaterials(this.environmentMaterials);
+      this.scene.setPropDefinitions(this.propDefinitions);
       this.render(true);
     } else if (action === "copy-json") {
       const textarea = this.panel.querySelector<HTMLTextAreaElement>("[data-json]");
@@ -722,9 +1366,29 @@ export class EditorApp {
         templates?: UnitTemplate[];
         classes?: ClassDefinition[];
         classDefinitions?: ClassDefinition[];
+        terrainMaterials?: EnvironmentMaterialDefinition[];
+        environmentMaterials?: EnvironmentMaterialDefinition[];
+        props?: PropDefinition[];
+        propDefinitions?: PropDefinition[];
       };
       if (parsed.campaign) {
         this.campaign = parsed.campaign;
+      }
+      const incomingMaterials = parsed.terrainMaterials ?? parsed.environmentMaterials;
+      if (incomingMaterials?.length) {
+        this.environmentMaterials = mergeMaterialDefinitions(defaultEnvironmentMaterials, incomingMaterials);
+        if (!this.environmentMaterials.some((material) => material.id === this.state.terrain)) {
+          this.state.terrain = this.environmentMaterials[0].id;
+        }
+        this.scene.setEnvironmentMaterials(this.environmentMaterials);
+      }
+      const incomingProps = parsed.props ?? parsed.propDefinitions;
+      if (incomingProps?.length) {
+        this.propDefinitions = mergePropDefinitions(defaultPropDefinitions, incomingProps);
+        if (!this.propDefinitions.some((prop) => prop.id === this.state.obstacle)) {
+          this.state.obstacle = this.propDefinitions[0].id;
+        }
+        this.scene.setPropDefinitions(this.propDefinitions);
       }
       const incomingClasses = parsed.classes ?? parsed.classDefinitions;
       if (incomingClasses?.length) {
@@ -741,11 +1405,12 @@ export class EditorApp {
         }
       }
       if (parsed.level) {
-        this.setCurrentLevel(parsed.level);
+        const normalizedLevel = normalizeLevelData(parsed.level);
+        this.setCurrentLevel(normalizedLevel);
         if (!this.levels.some((level) => level.id === parsed.level?.id)) {
-          this.levels.push(parsed.level);
+          this.levels.push(normalizedLevel);
         }
-        this.state.levelId = parsed.level.id;
+        this.state.levelId = normalizedLevel.id;
       }
       this.render(true);
       this.flash("Imported editor JSON.");
