@@ -1,9 +1,9 @@
 import type { CampaignData, ClassName, LevelData, TerrainType, TileData, UnitData, UnitFaceLayout, UnitTemplate } from "./schema";
 
-const classLoop: ClassName[] = ["Warrior", "Healer", "Ranger", "Mage"];
+export const classNames: ClassName[] = ["Warrior", "Healer", "Ranger", "Mage"];
 
 function faceLayout(offset = 0): UnitFaceLayout {
-  const spin = (amount: number) => classLoop.map((_, index) => classLoop[(index + offset + amount) % classLoop.length]);
+  const spin = (amount: number) => classNames.map((_, index) => classNames[(index + offset + amount) % classNames.length]);
   return {
     head: spin(1),
     body: spin(0),

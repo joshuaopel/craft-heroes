@@ -27,17 +27,29 @@ body,
 
 button,
 select,
+input,
 textarea {
   font: inherit;
 }
 
 button,
-select {
+select,
+input {
   min-height: 34px;
   border: 1px solid rgba(255, 255, 255, 0.16);
   border-radius: 7px;
-  background: rgba(255, 255, 255, 0.08);
+  background: #182123;
   color: var(--ink);
+}
+
+select option {
+  background: #111819;
+  color: #eef7ef;
+}
+
+input {
+  width: 100%;
+  padding: 0 10px;
 }
 
 button {
@@ -145,6 +157,30 @@ textarea {
   gap: 10px;
 }
 
+.control-section {
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.section-title {
+  display: grid;
+  gap: 3px;
+}
+
+.section-title strong {
+  font-size: 13px;
+}
+
+.section-title span {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
 .level-card {
   display: grid;
   gap: 4px;
@@ -158,6 +194,38 @@ textarea {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 8px;
+}
+
+.button-row.two {
+  grid-template-columns: repeat(2, 1fr);
+}
+
+.face-builder {
+  display: grid;
+  gap: 10px;
+}
+
+.face-row {
+  display: grid;
+  gap: 7px;
+}
+
+.face-row b {
+  font-size: 12px;
+  text-transform: capitalize;
+}
+
+.face-row label {
+  display: grid;
+  grid-template-columns: 22px 1fr;
+  gap: 6px;
+  align-items: center;
+}
+
+.face-row label span {
+  color: var(--muted);
+  font-size: 11px;
+  text-align: center;
 }
 
 .warnings {

@@ -29,6 +29,9 @@ const sectionSpecs: Record<SectionName, { height: number; width: number }> = {
 };
 
 type ClickHandler = (coord: TileCoord) => void;
+type SetLevelOptions = {
+  frame?: boolean;
+};
 
 export class LevelScene {
   private readonly renderer: THREE.WebGLRenderer;
@@ -95,10 +98,19 @@ export class LevelScene {
     this.renderLevel();
   }
 
-  setLevel(level: LevelData): void {
+  setLevel(level: LevelData, options: SetLevelOptions = {}): void {
+    const shouldFrame = options.frame ?? (!this.level || this.level.id !== level.id);
     this.level = level;
-    this.frameCamera(level);
+    if (shouldFrame) {
+      this.frameCamera(level);
+    }
     this.renderLevel();
+  }
+
+  frameCurrentLevel(): void {
+    if (this.level) {
+      this.frameCamera(this.level);
+    }
   }
 
   dispose(): void {

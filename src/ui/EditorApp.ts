@@ -1,4 +1,4 @@
-import { defaultCampaign, defaultLevels, unitTemplates } from "../game/content";
+import { classNames, defaultCampaign, defaultLevels, unitTemplates } from "../game/content";
 import {
   changeHeight,
   cloneLevel,
@@ -6,12 +6,38 @@ import {
   paintTerrain,
   placeObstacle,
   placeUnit,
+  resizeLevel,
   saveCampaign,
   saveLevel,
   validateLevel
 } from "../game/levelOps";
-import type { CampaignData, EditorTool, LevelData, ObstacleType, Team, TerrainType, TileCoord } from "../game/schema";
+import type { CampaignData, ClassName, EditorTool, LevelData, ObstacleType, SectionName, Team, TerrainType, TileCoord, UnitTemplate } from "../game/schema";
 import { LevelScene } from "../render/LevelScene";
+
+const directionLabels = ["S", "E", "N", "W"] as const;
+const sectionNames: SectionName[] = ["head", "body", "legs"];
+
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (character) => {
+    const entities: Record<string, string> = {
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#039;"
+    };
+    return entities[character];
+  });
+}
+
+function templateIdFromName(name: string): string {
+  const slug = name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return slug || `build-${Date.now()}`;
+}
 
 interface EditorState {
   mode: "editor" | "play";
@@ -31,6 +57,7 @@ export class EditorApp {
   private readonly panel: HTMLElement;
   private levels: LevelData[] = defaultLevels.map(cloneLevel);
   private campaign: CampaignData = structuredClone(defaultCampaign);
+  private templates: UnitTemplate[] = unitTemplates.map((template) => structuredClone(template));
   private state: EditorState = {
     mode: "editor",
     tool: "select",
@@ -53,7 +80,7 @@ export class EditorApp {
     this.panel = this.root.querySelector(".editor-panel") as HTMLElement;
     this.scene = new LevelScene(this.canvas);
     this.scene.onTileClick((coord) => this.handleTileClick(coord));
-    this.render();
+    this.render(true);
   }
 
   private currentLevel(): LevelData {
@@ -62,6 +89,55 @@ export class EditorApp {
 
   private setCurrentLevel(level: LevelData): void {
     this.levels = this.levels.map((candidate) => (candidate.id === level.id ? level : candidate));
+  }
+
+  private selectedTemplate(): UnitTemplate {
+    return this.templates.find((template) => template.id === this.state.templateId) ?? this.templates[0];
+  }
+
+  private uniqueTemplateId(name: string): string {
+    const baseId = templateIdFromName(name);
+    let id = baseId;
+    let index = 2;
+    while (this.templates.some((template) => template.id === id)) {
+      id = `${baseId}-${index}`;
+      index += 1;
+    }
+    return id;
+  }
+
+  private readBuildDraft(templateId = this.state.templateId): UnitTemplate {
+    const fallback = this.selectedTemplate();
+    const nameInput = this.panel.querySelector<HTMLInputElement>("[data-build='name']");
+    const hpInput = this.panel.querySelector<HTMLInputElement>("[data-build='hp']");
+    const faces = structuredClone(fallback.faces);
+    for (const section of sectionNames) {
+      for (let index = 0; index < directionLabels.length; index += 1) {
+        const select = this.panel.querySelector<HTMLSelectElement>(`[data-face-section='${section}'][data-face-index='${index}']`);
+        faces[section][index] = (select?.value as ClassName | undefined) ?? faces[section][index];
+      }
+    }
+    return {
+      id: templateId,
+      name: nameInput?.value.trim() || fallback.name,
+      hp: Math.max(1, Math.min(99, Number(hpInput?.value || fallback.hp))),
+      faces
+    };
+  }
+
+  private applyLevelSize(): void {
+    const widthInput = this.panel.querySelector<HTMLInputElement>("[data-size='width']");
+    const depthInput = this.panel.querySelector<HTMLInputElement>("[data-size='depth']");
+    const width = Number(widthInput?.value || this.currentLevel().width);
+    const depth = Number(depthInput?.value || this.currentLevel().depth);
+    const next = resizeLevel(this.currentLevel(), width, depth, this.state.terrain);
+    this.setCurrentLevel(next);
+    if (this.state.selected && (this.state.selected.x >= next.width || this.state.selected.z >= next.depth)) {
+      this.state.selected = undefined;
+    }
+    this.scene.setLevel(next);
+    this.scene.setSelected(this.state.selected);
+    this.updatePanel();
   }
 
   private handleTileClick(coord: TileCoord): void {
@@ -83,7 +159,7 @@ export class EditorApp {
     } else if (this.state.tool === "obstacle") {
       next = placeObstacle(level, coord, this.state.obstacle);
     } else if (this.state.tool === "unit") {
-      const template = unitTemplates.find((unitTemplate) => unitTemplate.id === this.state.templateId) ?? unitTemplates[0];
+      const template = this.selectedTemplate();
       next = placeUnit(level, coord, this.state.team, template);
     } else if (this.state.tool === "erase") {
       next = eraseTileOccupants(level, coord);
@@ -94,9 +170,9 @@ export class EditorApp {
     this.updatePanel();
   }
 
-  private render(): void {
+  private render(frameScene = false): void {
     this.scene.setMode(this.state.mode);
-    this.scene.setLevel(this.currentLevel());
+    this.scene.setLevel(this.currentLevel(), { frame: frameScene });
     this.scene.setSelected(this.state.selected);
     this.updatePanel();
   }
@@ -104,7 +180,8 @@ export class EditorApp {
   private updatePanel(): void {
     const level = this.currentLevel();
     const warnings = validateLevel(level);
-    const json = JSON.stringify({ campaign: this.campaign, level }, null, 2);
+    const currentTemplate = this.selectedTemplate();
+    const json = JSON.stringify({ campaign: this.campaign, level, templates: this.templates }, null, 2);
     this.panel.innerHTML = `
       <div class="panel-head">
         <div>
@@ -117,9 +194,30 @@ export class EditorApp {
       <label class="field">
         <span>Level</span>
         <select data-field="levelId">
-          ${this.levels.map((candidate) => `<option value="${candidate.id}" ${candidate.id === this.state.levelId ? "selected" : ""}>${candidate.name}</option>`).join("")}
+          ${this.levels.map((candidate) => `<option value="${escapeHtml(candidate.id)}" ${candidate.id === this.state.levelId ? "selected" : ""}>${escapeHtml(candidate.name)}</option>`).join("")}
         </select>
       </label>
+
+      <section class="control-section">
+        <div class="section-title">
+          <strong>Board Size</strong>
+          <span>Grow the map without resetting the camera.</span>
+        </div>
+        <div class="compact-grid">
+          <label class="field">
+            <span>Width</span>
+            <input data-size="width" type="number" min="4" max="32" step="1" value="${level.width}">
+          </label>
+          <label class="field">
+            <span>Depth</span>
+            <input data-size="depth" type="number" min="4" max="32" step="1" value="${level.depth}">
+          </label>
+        </div>
+        <div class="button-row two">
+          <button data-action="apply-size">Apply Size</button>
+          <button data-action="frame-board">Frame Board</button>
+        </div>
+      </section>
 
       <div class="tool-grid">
         ${(["select", "raise", "lower", "paint", "obstacle", "unit", "erase"] as EditorTool[])
@@ -153,14 +251,63 @@ export class EditorApp {
         <label class="field">
           <span>Unit</span>
           <select data-field="templateId">
-            ${unitTemplates.map((template) => `<option value="${template.id}" ${template.id === this.state.templateId ? "selected" : ""}>${template.name}</option>`).join("")}
+            ${this.templates.map((template) => `<option value="${escapeHtml(template.id)}" ${template.id === this.state.templateId ? "selected" : ""}>${escapeHtml(template.name)}</option>`).join("")}
           </select>
         </label>
       </div>
 
+      <section class="control-section">
+        <div class="section-title">
+          <strong>Character Builds</strong>
+          <span>Create reusable player or enemy cube layouts.</span>
+        </div>
+        <div class="compact-grid">
+          <label class="field">
+            <span>Build Name</span>
+            <input data-build="name" type="text" value="${escapeHtml(currentTemplate.name)}">
+          </label>
+          <label class="field">
+            <span>HP</span>
+            <input data-build="hp" type="number" min="1" max="99" step="1" value="${currentTemplate.hp}">
+          </label>
+        </div>
+        <div class="face-builder">
+          ${sectionNames
+            .map(
+              (section) => `
+                <div class="face-row">
+                  <b>${section === "body" ? "body / arms" : section}</b>
+                  ${directionLabels
+                    .map(
+                      (direction, index) => `
+                        <label>
+                          <span>${direction}</span>
+                          <select data-face-section="${section}" data-face-index="${index}">
+                            ${classNames
+                              .map(
+                                (className) =>
+                                  `<option value="${className}" ${currentTemplate.faces[section][index] === className ? "selected" : ""}>${className}</option>`
+                              )
+                              .join("")}
+                          </select>
+                        </label>
+                      `
+                    )
+                    .join("")}
+                </div>
+              `
+            )
+            .join("")}
+        </div>
+        <div class="button-row two">
+          <button data-action="update-build">Update Selected</button>
+          <button data-action="save-build-new">Save As New Build</button>
+        </div>
+      </section>
+
       <div class="level-card">
         <strong>${level.name}</strong>
-        <span>${level.width} x ${level.depth} board · ${level.units.length} units · ${level.obstacles.length} obstacles</span>
+        <span>${level.width} x ${level.depth} board / ${level.units.length} units / ${level.obstacles.length} obstacles</span>
         <span>Next: ${level.links.map((link) => link.to).join(", ") || "campaign end"}</span>
       </div>
 
@@ -199,6 +346,8 @@ export class EditorApp {
         (this.state[key] as string) = select.value;
         if (key === "levelId") {
           this.state.selected = undefined;
+          this.render(true);
+          return;
         }
         this.render();
       });
@@ -211,8 +360,8 @@ export class EditorApp {
     const chip = this.root.querySelector("#status-chip");
     if (chip) {
       chip.textContent = this.state.selected
-        ? `${this.state.mode.toUpperCase()} · ${this.state.tool} · tile ${this.state.selected.x}, ${this.state.selected.z}`
-        : `${this.state.mode.toUpperCase()} · ${this.state.tool} · click a tile`;
+        ? `${this.state.mode.toUpperCase()} / ${this.state.tool} / tile ${this.state.selected.x}, ${this.state.selected.z}`
+        : `${this.state.mode.toUpperCase()} / ${this.state.tool} / click a tile`;
     }
   }
 
@@ -221,6 +370,26 @@ export class EditorApp {
       this.state.mode = this.state.mode === "editor" ? "play" : "editor";
       this.scene.setMode(this.state.mode);
       this.updatePanel();
+    } else if (action === "apply-size") {
+      this.applyLevelSize();
+    } else if (action === "frame-board") {
+      this.scene.frameCurrentLevel();
+      this.flash("Camera framed to the current board.");
+    } else if (action === "update-build") {
+      const draft = this.readBuildDraft();
+      this.templates = this.templates.map((template) => (template.id === draft.id ? draft : template));
+      this.updatePanel();
+      this.flash(`Updated ${draft.name}.`);
+    } else if (action === "save-build-new") {
+      const draft = this.readBuildDraft();
+      const nextTemplate = {
+        ...draft,
+        id: this.uniqueTemplateId(draft.name)
+      };
+      this.templates.push(nextTemplate);
+      this.state.templateId = nextTemplate.id;
+      this.updatePanel();
+      this.flash(`Created ${nextTemplate.name}.`);
     } else if (action === "duplicate-level") {
       const source = this.currentLevel();
       const copy = cloneLevel(source);
@@ -231,17 +400,20 @@ export class EditorApp {
       this.campaign.levels.push({ id: copy.id, file: `levels/${copy.id}.json`, next: [] });
       this.state.levelId = copy.id;
       this.state.selected = undefined;
-      this.render();
+      this.render(true);
     } else if (action === "save-local") {
       saveLevel(this.currentLevel());
       saveCampaign(this.campaign);
+      localStorage.setItem("craft-heroes-unit-templates", JSON.stringify(this.templates, null, 2));
       this.flash("Saved campaign and level to browser storage.");
     } else if (action === "load-sample") {
       this.levels = defaultLevels.map(cloneLevel);
       this.campaign = structuredClone(defaultCampaign);
+      this.templates = unitTemplates.map((template) => structuredClone(template));
       this.state.levelId = this.campaign.startLevel;
+      this.state.templateId = this.templates[1]?.id ?? this.templates[0].id;
       this.state.selected = undefined;
-      this.render();
+      this.render(true);
     } else if (action === "copy-json") {
       const textarea = this.panel.querySelector<HTMLTextAreaElement>("[data-json]");
       if (textarea) {
@@ -255,7 +427,7 @@ export class EditorApp {
       if (nextId && this.levels.some((level) => level.id === nextId)) {
         this.state.levelId = nextId;
         this.state.selected = undefined;
-        this.render();
+        this.render(true);
       } else {
         this.flash("No next level is configured.");
       }
@@ -268,9 +440,15 @@ export class EditorApp {
       return;
     }
     try {
-      const parsed = JSON.parse(textarea.value) as { campaign?: CampaignData; level?: LevelData };
+      const parsed = JSON.parse(textarea.value) as { campaign?: CampaignData; level?: LevelData; templates?: UnitTemplate[] };
       if (parsed.campaign) {
         this.campaign = parsed.campaign;
+      }
+      if (parsed.templates?.length) {
+        this.templates = parsed.templates;
+        if (!this.templates.some((template) => template.id === this.state.templateId)) {
+          this.state.templateId = this.templates[0].id;
+        }
       }
       if (parsed.level) {
         this.setCurrentLevel(parsed.level);
@@ -279,7 +457,7 @@ export class EditorApp {
         }
         this.state.levelId = parsed.level.id;
       }
-      this.render();
+      this.render(true);
       this.flash("Imported editor JSON.");
     } catch {
       this.flash("Import failed: invalid JSON.");

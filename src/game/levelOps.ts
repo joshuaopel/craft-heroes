@@ -46,6 +46,23 @@ export function paintTerrain(level: LevelData, coord: TileCoord, terrain: Terrai
   return next;
 }
 
+export function resizeLevel(level: LevelData, width: number, depth: number, terrain: TerrainType = "grass"): LevelData {
+  const next = cloneLevel(level);
+  const nextWidth = Math.max(4, Math.min(32, Math.round(width)));
+  const nextDepth = Math.max(4, Math.min(32, Math.round(depth)));
+  next.width = nextWidth;
+  next.depth = nextDepth;
+  next.tiles = Array.from({ length: nextDepth }, (_, z) =>
+    Array.from({ length: nextWidth }, (_, x) => {
+      const existing = level.tiles[z]?.[x];
+      return existing ? { ...existing } : { height: 1, terrain };
+    })
+  );
+  next.obstacles = next.obstacles.filter((obstacle) => isInside(next, obstacle));
+  next.units = next.units.filter((unit) => isInside(next, unit));
+  return next;
+}
+
 export function placeObstacle(level: LevelData, coord: TileCoord, type: ObstacleType): LevelData {
   const next = cloneLevel(level);
   next.obstacles = next.obstacles.filter((obstacle) => obstacle.x !== coord.x || obstacle.z !== coord.z);
