@@ -1,9 +1,25 @@
 # Craft Heroes
 
-A playable 3D HTML prototype for a turn-based tactics pitch.
+A playable 3D tactics prototype and early production editor branch for Craft Heroes.
 
 Craft Heroes uses voxel terrain, height advantage, line of sight, and modular cube heroes. Each hero has independently rotating head, body/arms, and legs sections. The class face aimed at an action determines the stats used for movement, attack, healing, and defense.
 
-Open `index.html` locally, or host the repo with GitHub Pages from the `main` branch root.
+## Development
+
+```powershell
+npm install
+npm run dev
+```
+
+## Editor Foundation
+
+The production branch splits the game into a Vite + TypeScript app with:
+
+- shared level and campaign JSON schemas
+- a Three.js voxel board renderer
+- editor tools for terrain height, terrain paint, obstacles, unit placement, and erase
+- play/editor mode switching
+- current-level JSON export/import
+- campaign links between levels
 
 Class-section face art lives in `assets/classes/` as one PNG per class and body section.
