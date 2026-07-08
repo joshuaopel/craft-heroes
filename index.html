@@ -712,7 +712,23 @@
     controls.minDistance = 6;
     controls.maxDistance = 18;
     controls.maxPolarAngle = Math.PI * 0.43;
-    controls.target.set(0.1, 0.6, -0.1);
+
+    function frameCameraForViewport() {
+      const isNarrow = window.innerWidth < 700;
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.fov = isNarrow ? 58 : 47;
+      if (isNarrow) {
+        camera.position.set(8.6, 7.5, 11.2);
+        controls.target.set(-0.95, 0.75, 0.85);
+      } else {
+        camera.position.set(6.4, 6.1, 8.2);
+        controls.target.set(0.1, 0.6, -0.1);
+      }
+      camera.updateProjectionMatrix();
+      controls.update();
+    }
+
+    frameCameraForViewport();
 
     renderer.domElement.addEventListener("webglcontextlost", (event) => {
       event.preventDefault();
@@ -772,14 +788,52 @@
       selfHeal: new THREE.MeshBasicMaterial({ color: "#45d483", transparent: true, opacity: 0.32, depthWrite: false })
     };
 
-    const classMaterials = Object.fromEntries(
-      Object.entries(classInfo).map(([name, info]) => [
-        name,
-        new THREE.MeshStandardMaterial({
-          color: info.color,
-          roughness: 0.62,
-          metalness: 0.03
-        })
+    const textureLoader = new THREE.TextureLoader();
+    const sectionSpecs = {
+      legs: { height: 0.54, width: 0.62 },
+      body: { height: 0.62, width: 0.72 },
+      head: { height: 0.54, width: 0.62 }
+    };
+
+    function createClassTextureMaterial(className, section) {
+      const info = classInfo[className];
+      let material;
+      const texture = textureLoader.load(
+        `assets/classes/${className.toLowerCase()}-${section}.png`,
+        () => {
+          material.needsUpdate = true;
+        },
+        undefined,
+        () => {
+          material.map = null;
+          material.color.set(info.color);
+          material.needsUpdate = true;
+        }
+      );
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.magFilter = THREE.NearestFilter;
+      texture.minFilter = THREE.NearestMipmapNearestFilter;
+      texture.anisotropy = Math.min(4, renderer.capabilities.getMaxAnisotropy());
+      texture.name = `${className}-${section}`;
+
+      material = new THREE.MeshStandardMaterial({
+        color: "#ffffff",
+        map: texture,
+        roughness: 0.66,
+        metalness: 0.02
+      });
+      return material;
+    }
+
+    const classSectionMaterials = Object.fromEntries(
+      sectionNames.map((section) => [
+        section,
+        Object.fromEntries(
+          Object.keys(classInfo).map((className) => [
+            className,
+            createClassTextureMaterial(className, section)
+          ])
+        )
       ])
     );
 
@@ -940,67 +994,17 @@
       boardGroup.add(ground);
     }
 
-    function makeLabelTexture(text, background) {
-      const canvas = document.createElement("canvas");
-      canvas.width = 128;
-      canvas.height = 128;
-      const ctx = canvas.getContext("2d");
-      ctx.fillStyle = background;
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      ctx.fillStyle = "rgba(0, 0, 0, 0.22)";
-      ctx.fillRect(0, 86, canvas.width, 42);
-      ctx.fillStyle = "#ffffff";
-      ctx.font = "800 68px Arial";
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.fillText(text, 64, 55);
-      ctx.fillStyle = "rgba(255, 255, 255, 0.82)";
-      ctx.font = "700 20px Arial";
-      ctx.fillText("FACE", 64, 106);
-      const texture = new THREE.CanvasTexture(canvas);
-      texture.colorSpace = THREE.SRGBColorSpace;
-      return texture;
-    }
-
-    function addFaceLabels(sectionGroup, sideClasses, sectionHeight) {
-      sideClasses.forEach((className, index) => {
-        const info = classInfo[className];
-        const material = new THREE.MeshBasicMaterial({
-          map: makeLabelTexture(info.short, info.color),
-          transparent: true,
-          depthWrite: false,
-          toneMapped: false
-        });
-        const label = new THREE.Mesh(new THREE.PlaneGeometry(0.34, sectionHeight * 0.46), material);
-        label.renderOrder = 10;
-        if (index === 0) {
-          label.position.set(0, 0.01, 0.353);
-          label.rotation.y = 0;
-        } else if (index === 1) {
-          label.position.set(0.353, 0.01, 0);
-          label.rotation.y = Math.PI / 2;
-        } else if (index === 2) {
-          label.position.set(0, 0.01, -0.353);
-          label.rotation.y = Math.PI;
-        } else {
-          label.position.set(-0.353, 0.01, 0);
-          label.rotation.y = -Math.PI / 2;
-        }
-        sectionGroup.add(label);
-      });
-    }
-
     function createSectionMesh(unit, section, sectionHeight, width) {
       const sides = unit.faces[section];
       const mesh = new THREE.Mesh(
         new THREE.BoxGeometry(width, sectionHeight, width),
         [
-          classMaterials[sides[1]],
-          classMaterials[sides[3]],
+          classSectionMaterials[section][sides[1]],
+          classSectionMaterials[section][sides[3]],
           materials.neutralTop,
           materials.neutralBottom,
-          classMaterials[sides[0]],
-          classMaterials[sides[2]]
+          classSectionMaterials[section][sides[0]],
+          classSectionMaterials[section][sides[2]]
         ]
       );
       mesh.castShadow = true;
@@ -1008,7 +1012,6 @@
       mesh.userData = { kind: "unit", unitId: unit.id };
       const group = new THREE.Group();
       group.add(mesh);
-      addFaceLabels(group, sides, sectionHeight);
       return group;
     }
 
@@ -1033,12 +1036,14 @@
     function createUnit(unit) {
       const group = new THREE.Group();
       const sections = {};
-      const legs = createSectionMesh(unit, "legs", 0.34, 0.72);
-      const body = createSectionMesh(unit, "body", 0.42, 0.78);
-      const head = createSectionMesh(unit, "head", 0.34, 0.66);
-      legs.position.y = 0.17;
-      body.position.y = 0.58;
-      head.position.y = 0.98;
+      const gap = 0.025;
+      const heroHeight = sectionSpecs.legs.height + sectionSpecs.body.height + sectionSpecs.head.height + gap * 2;
+      const legs = createSectionMesh(unit, "legs", sectionSpecs.legs.height, sectionSpecs.legs.width);
+      const body = createSectionMesh(unit, "body", sectionSpecs.body.height, sectionSpecs.body.width);
+      const head = createSectionMesh(unit, "head", sectionSpecs.head.height, sectionSpecs.head.width);
+      legs.position.y = sectionSpecs.legs.height / 2;
+      body.position.y = sectionSpecs.legs.height + gap + sectionSpecs.body.height / 2;
+      head.position.y = sectionSpecs.legs.height + gap + sectionSpecs.body.height + gap + sectionSpecs.head.height / 2;
       sections.legs = legs;
       sections.body = body;
       sections.head = head;
@@ -1053,14 +1058,14 @@
       group.add(ring);
 
       const teamFlag = new THREE.Mesh(
-        new THREE.BoxGeometry(0.78, 0.045, 0.78),
+        new THREE.BoxGeometry(sectionSpecs.body.width + 0.06, 0.045, sectionSpecs.body.width + 0.06),
         new THREE.MeshBasicMaterial({ color: unit.color, transparent: true, opacity: 0.62 })
       );
-      teamFlag.position.y = 1.2;
+      teamFlag.position.y = heroHeight + 0.04;
       group.add(teamFlag);
 
       const healthBar = createHealthBar(unit);
-      healthBar.position.y = 1.45;
+      healthBar.position.y = heroHeight + 0.3;
       group.add(healthBar);
 
       group.userData = { kind: "unit", unitId: unit.id };
@@ -1728,9 +1733,8 @@
     }
 
     function resize() {
-      camera.aspect = window.innerWidth / window.innerHeight;
-      camera.updateProjectionMatrix();
       renderer.setSize(window.innerWidth, window.innerHeight);
+      frameCameraForViewport();
     }
 
     dom.moveButton.addEventListener("click", () => setMode("move"));
