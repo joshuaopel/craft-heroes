@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import type {
   ClassDefinition,
   ClassId,
@@ -41,8 +42,14 @@ const fallbackMaterial: EnvironmentMaterialDefinition = {
   name: "Grass",
   topColor: "#8fc265",
   sideColor: "#5c6f48",
+  sideCapColor: "#6f8f45",
+  sideFullColor: "#6b4f35",
+  sideHalfColor: "#4f3d2c",
   topImageUrl: "",
   sideImageUrl: "",
+  sideCapImageUrl: "",
+  sideFullImageUrl: "",
+  sideHalfImageUrl: "",
   topRule: "Fallback playable ground.",
   sideRule: "Fallback exposed block side.",
   movementCost: 1,
@@ -53,8 +60,12 @@ const fallbackProp: PropDefinition = {
   id: "wall",
   name: "Wall",
   role: "blocker",
+  assetKind: "box",
   color: "#6c716a",
   textureUrl: "",
+  modelUrl: "",
+  modelFileName: "",
+  fitModelToTile: true,
   width: 0.75,
   height: 0.9,
   depth: 0.75,
@@ -67,6 +78,12 @@ const fallbackProp: PropDefinition = {
 type ClickHandler = (coord: TileCoord) => void;
 type SetLevelOptions = {
   frame?: boolean;
+};
+type TerrainMaterialSet = {
+  top: THREE.MeshStandardMaterial;
+  sideCap: THREE.MeshStandardMaterial;
+  sideFull: THREE.MeshStandardMaterial;
+  sideHalf: THREE.MeshStandardMaterial;
 };
 const topUvRotations = [Math.PI / 2, -Math.PI / 2, Math.PI] as const;
 
@@ -83,6 +100,8 @@ export class LevelScene {
   private readonly pointer = new THREE.Vector2();
   private readonly clickable: THREE.Object3D[] = [];
   private readonly textureLoader = new THREE.TextureLoader();
+  private readonly gltfLoader = new GLTFLoader();
+  private readonly glbCache = new Map<string, Promise<THREE.Group>>();
   private classDefinitions: ClassDefinition[] = [];
   private environmentMaterials: EnvironmentMaterialDefinition[] = [];
   private propDefinitions: PropDefinition[] = [];
@@ -91,7 +110,7 @@ export class LevelScene {
     body: {},
     legs: {}
   };
-  private terrainMaterials: Record<string, { top: THREE.MeshStandardMaterial; side: THREE.MeshStandardMaterial }> = {};
+  private terrainMaterials: Record<string, TerrainMaterialSet> = {};
   private propMaterials: Record<PropDefinitionId, THREE.MeshStandardMaterial> = {};
   private level?: LevelData;
   private selected?: TileCoord;
@@ -184,6 +203,7 @@ export class LevelScene {
   setPropDefinitions(propDefinitions: PropDefinition[]): void {
     const previousMaterials = this.collectPropMaterials();
     this.propDefinitions = structuredClone(propDefinitions.length ? propDefinitions : [fallbackProp]);
+    this.glbCache.clear();
     this.propMaterials = this.createPropMaterials(this.propDefinitions);
     this.renderLevel();
     for (const material of previousMaterials) {
@@ -215,14 +235,14 @@ export class LevelScene {
     return materials;
   }
 
-  private createTerrainMaterials(
-    environmentMaterials: EnvironmentMaterialDefinition[]
-  ): Record<string, { top: THREE.MeshStandardMaterial; side: THREE.MeshStandardMaterial }> {
-    const materials: Record<string, { top: THREE.MeshStandardMaterial; side: THREE.MeshStandardMaterial }> = {};
+  private createTerrainMaterials(environmentMaterials: EnvironmentMaterialDefinition[]): Record<string, TerrainMaterialSet> {
+    const materials: Record<string, TerrainMaterialSet> = {};
     for (const definition of environmentMaterials) {
       materials[definition.id] = {
         top: this.createMappedMaterial(definition.topColor, definition.topImageUrl, 0.72),
-        side: this.createMappedMaterial(definition.sideColor, definition.sideImageUrl, 0.86)
+        sideCap: this.createMappedMaterial(definition.sideCapColor || definition.sideColor, definition.sideCapImageUrl || definition.sideImageUrl, 0.86),
+        sideFull: this.createMappedMaterial(definition.sideFullColor || definition.sideColor, definition.sideFullImageUrl || definition.sideImageUrl, 0.88),
+        sideHalf: this.createMappedMaterial(definition.sideHalfColor || definition.sideColor, definition.sideHalfImageUrl || definition.sideImageUrl, 0.9)
       };
     }
     return materials;
@@ -278,14 +298,19 @@ export class LevelScene {
   }
 
   private collectTerrainMaterials(): THREE.MeshStandardMaterial[] {
-    return Object.values(this.terrainMaterials).flatMap((materialSet) => [materialSet.top, materialSet.side]);
+    return Object.values(this.terrainMaterials).flatMap((materialSet) => [
+      materialSet.top,
+      materialSet.sideCap,
+      materialSet.sideFull,
+      materialSet.sideHalf
+    ]);
   }
 
   private collectPropMaterials(): THREE.MeshStandardMaterial[] {
     return Object.values(this.propMaterials);
   }
 
-  private terrainMaterialFor(materialId: string): { top: THREE.MeshStandardMaterial; side: THREE.MeshStandardMaterial } {
+  private terrainMaterialFor(materialId: string): TerrainMaterialSet {
     const existing = this.terrainMaterials[materialId];
     if (existing) {
       return existing;
@@ -293,7 +318,9 @@ export class LevelScene {
     const definition = this.environmentMaterials.find((material) => material.id === materialId) ?? fallbackMaterial;
     const fallback = {
       top: this.createMappedMaterial(definition.topColor, definition.topImageUrl, 0.72),
-      side: this.createMappedMaterial(definition.sideColor, definition.sideImageUrl, 0.86)
+      sideCap: this.createMappedMaterial(definition.sideCapColor || definition.sideColor, definition.sideCapImageUrl || definition.sideImageUrl, 0.86),
+      sideFull: this.createMappedMaterial(definition.sideFullColor || definition.sideColor, definition.sideFullImageUrl || definition.sideImageUrl, 0.88),
+      sideHalf: this.createMappedMaterial(definition.sideHalfColor || definition.sideColor, definition.sideHalfImageUrl || definition.sideImageUrl, 0.9)
     };
     this.terrainMaterials[materialId] = fallback;
     return fallback;
@@ -432,31 +459,59 @@ export class LevelScene {
     for (let z = 0; z < level.depth; z += 1) {
       for (let x = 0; x < level.width; x += 1) {
         const tile = level.tiles[z][x];
-        const height = baseTileHeight + tile.height * heightStep;
+        const totalHeight = baseTileHeight + tile.height * heightStep;
         const terrainMaterials = this.terrainMaterialFor(tile.terrain);
-        const materials = [
-          terrainMaterials.side,
-          terrainMaterials.side,
-          terrainMaterials.top,
-          new THREE.MeshStandardMaterial({ color: "#49392c", roughness: 0.96 }),
-          terrainMaterials.side,
-          terrainMaterials.side
-        ];
-        const mesh = new THREE.Mesh(this.createTerrainGeometry(tileSize * 0.96, height, tileSize * 0.96, tile.terrain, x, z), materials);
-        mesh.position.copy(this.worldPosition(level, x, z, height / 2));
-        mesh.castShadow = true;
-        mesh.receiveShadow = true;
-        mesh.userData = { x, z };
-        this.root.add(mesh);
-        this.clickable.push(mesh);
+        const group = new THREE.Group();
+        const width = tileSize * 0.96;
+        const depth = tileSize * 0.96;
+
+        const topMesh = new THREE.Mesh(this.createTerrainTopGeometry(width, depth, tile.terrain, x, z), terrainMaterials.top);
+        topMesh.position.y = totalHeight + 0.002;
+        topMesh.rotation.x = -Math.PI / 2;
+        topMesh.receiveShadow = true;
+        group.add(topMesh);
+
+        this.addTerrainSideBand(group, width, depth, 0, baseTileHeight, terrainMaterials.sideHalf);
+        for (let step = 0; step < tile.height; step += 1) {
+          const material = step === tile.height - 1 ? terrainMaterials.sideCap : terrainMaterials.sideFull;
+          this.addTerrainSideBand(group, width, depth, baseTileHeight + step * heightStep, heightStep, material);
+        }
+
+        group.position.copy(this.worldPosition(level, x, z, 0));
+        group.userData = { x, z };
+        group.traverse((child) => {
+          child.userData = { x, z };
+          const mesh = child as THREE.Mesh;
+          if (mesh.isMesh) {
+            mesh.castShadow = true;
+            mesh.receiveShadow = true;
+            this.clickable.push(mesh);
+          }
+        });
+        this.root.add(group);
       }
     }
   }
 
-  private createTerrainGeometry(width: number, height: number, depth: number, materialId: string, x: number, z: number): THREE.BoxGeometry {
-    const geometry = new THREE.BoxGeometry(width, height, depth);
-    this.rotateTopFaceUvs(geometry, this.topUvRotationForTile(materialId, x, z));
+  private createTerrainTopGeometry(width: number, depth: number, materialId: string, x: number, z: number): THREE.PlaneGeometry {
+    const geometry = new THREE.PlaneGeometry(width, depth);
+    this.rotateAllUvs(geometry, this.topUvRotationForTile(materialId, x, z));
     return geometry;
+  }
+
+  private addTerrainSideBand(group: THREE.Group, width: number, depth: number, y: number, height: number, material: THREE.MeshStandardMaterial): void {
+    const faces = [
+      { position: new THREE.Vector3(0, y + height / 2, depth / 2), rotationY: 0, width },
+      { position: new THREE.Vector3(0, y + height / 2, -depth / 2), rotationY: Math.PI, width },
+      { position: new THREE.Vector3(width / 2, y + height / 2, 0), rotationY: Math.PI / 2, width: depth },
+      { position: new THREE.Vector3(-width / 2, y + height / 2, 0), rotationY: -Math.PI / 2, width: depth }
+    ];
+    for (const face of faces) {
+      const mesh = new THREE.Mesh(new THREE.PlaneGeometry(face.width, height), material);
+      mesh.position.copy(face.position);
+      mesh.rotation.y = face.rotationY;
+      group.add(mesh);
+    }
   }
 
   private topUvRotationForTile(materialId: string, x: number, z: number): number {
@@ -473,23 +528,16 @@ export class LevelScene {
     return hash >>> 0;
   }
 
-  private rotateTopFaceUvs(geometry: THREE.BufferGeometry, rotation: number): void {
+  private rotateAllUvs(geometry: THREE.BufferGeometry, rotation: number): void {
     const uv = geometry.getAttribute("uv") as THREE.BufferAttribute | undefined;
-    const topGroup = geometry.groups.find((group) => group.materialIndex === 2);
-    if (!uv || !topGroup) {
+    if (!uv) {
       return;
-    }
-
-    const vertexIndices = new Set<number>();
-    const index = geometry.getIndex();
-    for (let offset = topGroup.start; offset < topGroup.start + topGroup.count; offset += 1) {
-      vertexIndices.add(index ? index.getX(offset) : offset);
     }
 
     const center = 0.5;
     const cos = Math.cos(rotation);
     const sin = Math.sin(rotation);
-    for (const vertexIndex of vertexIndices) {
+    for (let vertexIndex = 0; vertexIndex < uv.count; vertexIndex += 1) {
       const u = uv.getX(vertexIndex) - center;
       const v = uv.getY(vertexIndex) - center;
       uv.setXY(vertexIndex, u * cos - v * sin + center, u * sin + v * cos + center);
@@ -499,36 +547,155 @@ export class LevelScene {
 
   private addObstacle(level: LevelData, obstacle: ObstacleData): void {
     const baseY = this.tileTopY(level, obstacle.x, obstacle.z);
-    const mesh = this.createPropMesh(obstacle.type, 1);
-    mesh.position.copy(this.worldPosition(level, obstacle.x, obstacle.z, baseY + mesh.userData.height / 2));
-    mesh.userData = { ...mesh.userData, x: obstacle.x, z: obstacle.z };
-    this.root.add(mesh);
-    this.clickable.push(mesh);
+    const group = this.createPropObject(obstacle.type, 1, true);
+    group.position.copy(this.worldPosition(level, obstacle.x, obstacle.z, baseY));
+    group.userData = { ...group.userData, x: obstacle.x, z: obstacle.z };
+    group.traverse((child) => {
+      child.userData = { ...child.userData, x: obstacle.x, z: obstacle.z };
+      const mesh = child as THREE.Mesh;
+      if (mesh.isMesh && child.userData.clickProxy) {
+        this.clickable.push(mesh);
+      }
+    });
+    this.root.add(group);
   }
 
   private addSurroundingProp(level: LevelData, prop: SurroundingPropData): void {
-    const mesh = this.createPropMesh(prop.type, prop.scale);
-    mesh.position.copy(this.worldPosition(level, prop.x, prop.z, mesh.userData.height / 2));
-    mesh.rotation.y = prop.rotation;
-    this.root.add(mesh);
+    const group = this.createPropObject(prop.type, prop.scale, false);
+    group.position.copy(this.worldPosition(level, prop.x, prop.z, 0));
+    group.rotation.y = prop.rotation;
+    this.root.add(group);
   }
 
-  private createPropMesh(propId: PropDefinitionId, scale: number): THREE.Mesh {
+  private createPropObject(propId: PropDefinitionId, scale: number, includeClickProxy: boolean): THREE.Group {
     const definition = this.propDefinitionFor(propId);
     const resolvedScale = Math.max(0.2, Math.min(3, scale || 1));
     const height = Math.max(0.1, definition.height * resolvedScale);
-    const mesh = new THREE.Mesh(
+    const group = new THREE.Group();
+    group.userData = { propId: definition.id, height };
+
+    const proxy = new THREE.Mesh(
       new THREE.BoxGeometry(
         Math.max(0.1, definition.width * resolvedScale),
         height,
         Math.max(0.1, definition.depth * resolvedScale)
       ),
-      this.propMaterialFor(definition.id)
+      definition.assetKind === "glb" && definition.modelUrl
+        ? new THREE.MeshBasicMaterial({ color: "#ffffff", transparent: true, opacity: includeClickProxy ? 0.02 : 0, depthWrite: false })
+        : this.propMaterialFor(definition.id)
     );
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
-    mesh.userData = { propId: definition.id, height };
-    return mesh;
+    proxy.position.y = height / 2;
+    proxy.castShadow = definition.assetKind !== "glb";
+    proxy.receiveShadow = definition.assetKind !== "glb";
+    proxy.userData = { propId: definition.id, height, clickProxy: includeClickProxy };
+    group.add(proxy);
+
+    if (definition.assetKind === "glb" && definition.modelUrl) {
+      void this.loadPropModel(definition).then((source) => {
+        if (!group.parent) {
+          return;
+        }
+        const instance = source.clone(true);
+        this.prepareModelInstance(instance, definition, resolvedScale);
+        group.add(instance);
+      }).catch((error) => {
+        console.warn(`Unable to load prop model "${definition.name}".`, error);
+      });
+    }
+    return group;
+  }
+
+  private loadPropModel(definition: PropDefinition): Promise<THREE.Group> {
+    const cacheKey = `${definition.id}:${definition.modelUrl}`;
+    const cached = this.glbCache.get(cacheKey);
+    if (cached) {
+      return cached;
+    }
+    const promise = new Promise<THREE.Group>((resolve, reject) => {
+      this.gltfLoader.load(
+        definition.modelUrl,
+        (gltf) => {
+          const source = gltf.scene;
+          source.traverse((child) => {
+            const mesh = child as THREE.Mesh;
+            if (mesh.isMesh) {
+              mesh.castShadow = true;
+              mesh.receiveShadow = true;
+            }
+          });
+          resolve(source);
+        },
+        undefined,
+        reject
+      );
+    });
+    promise.catch(() => {
+      if (this.glbCache.get(cacheKey) === promise) {
+        this.glbCache.delete(cacheKey);
+      }
+    });
+    this.glbCache.set(cacheKey, promise);
+    return promise;
+  }
+
+  private prepareModelInstance(instance: THREE.Group, definition: PropDefinition, scale: number): void {
+    this.cloneModelResources(instance);
+    instance.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(instance);
+    if (box.isEmpty()) {
+      return;
+    }
+    const size = box.getSize(new THREE.Vector3());
+    const target = new THREE.Vector3(
+      Math.max(0.1, definition.width * scale),
+      Math.max(0.1, definition.height * scale),
+      Math.max(0.1, definition.depth * scale)
+    );
+    const fitScale = definition.fitModelToTile
+      ? Math.min(
+          size.x > 0 ? target.x / size.x : 1,
+          size.y > 0 ? target.y / size.y : 1,
+          size.z > 0 ? target.z / size.z : 1
+        )
+      : scale;
+    instance.scale.multiplyScalar(Number.isFinite(fitScale) && fitScale > 0 ? fitScale : 1);
+    instance.updateMatrixWorld(true);
+    const fittedBox = new THREE.Box3().setFromObject(instance);
+    if (fittedBox.isEmpty()) {
+      return;
+    }
+    const fittedCenter = fittedBox.getCenter(new THREE.Vector3());
+    instance.position.x -= fittedCenter.x;
+    instance.position.y -= fittedBox.min.y;
+    instance.position.z -= fittedCenter.z;
+  }
+
+  private cloneModelResources(object: THREE.Object3D): void {
+    object.traverse((child) => {
+      const mesh = child as THREE.Mesh;
+      if (!mesh.isMesh) {
+        return;
+      }
+      mesh.geometry = mesh.geometry.clone();
+      if (Array.isArray(mesh.material)) {
+        mesh.material = mesh.material.map((material) => this.cloneMaterial(material));
+      } else {
+        mesh.material = this.cloneMaterial(mesh.material);
+      }
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+    });
+  }
+
+  private cloneMaterial(material: THREE.Material): THREE.Material {
+    const clone = material.clone();
+    const mappedClone = clone as THREE.MeshStandardMaterial;
+    const mappedSource = material as THREE.MeshStandardMaterial;
+    if (mappedSource.map) {
+      mappedClone.map = mappedSource.map.clone();
+      mappedClone.map.needsUpdate = true;
+    }
+    return clone;
   }
 
   private addUnit(level: LevelData, unit: UnitData): void {

@@ -67,6 +67,10 @@ function escapeHtml(value: string): string {
   });
 }
 
+function assetPreviewImage(imageUrl: string): string {
+  return imageUrl ? `<img src="${escapeHtml(imageUrl)}" alt="">` : "";
+}
+
 function templateIdFromName(name: string): string {
   const slug = name
     .trim()
@@ -177,8 +181,14 @@ function normalizeMaterialDefinition(material: Partial<EnvironmentMaterialDefini
     name: material.name || id,
     topColor: material.topColor || fallback.topColor,
     sideColor: material.sideColor || fallback.sideColor,
+    sideCapColor: material.sideCapColor || material.sideColor || fallback.sideCapColor,
+    sideFullColor: material.sideFullColor || material.sideColor || fallback.sideFullColor,
+    sideHalfColor: material.sideHalfColor || material.sideColor || fallback.sideHalfColor,
     topImageUrl: typeof material.topImageUrl === "string" ? material.topImageUrl : "",
     sideImageUrl: typeof material.sideImageUrl === "string" ? material.sideImageUrl : "",
+    sideCapImageUrl: typeof material.sideCapImageUrl === "string" ? material.sideCapImageUrl : typeof material.sideImageUrl === "string" ? material.sideImageUrl : "",
+    sideFullImageUrl: typeof material.sideFullImageUrl === "string" ? material.sideFullImageUrl : typeof material.sideImageUrl === "string" ? material.sideImageUrl : "",
+    sideHalfImageUrl: typeof material.sideHalfImageUrl === "string" ? material.sideHalfImageUrl : typeof material.sideImageUrl === "string" ? material.sideImageUrl : "",
     topRule: material.topRule || "",
     sideRule: material.sideRule || "",
     movementCost: Math.max(1, Math.min(9, numberOrFallback(material.movementCost, 1))),
@@ -205,8 +215,12 @@ function normalizePropDefinition(prop: Partial<PropDefinition>): PropDefinition 
     id,
     name: prop.name || id,
     role,
+    assetKind: prop.assetKind === "glb" ? "glb" : "box",
     color: prop.color || fallback.color,
     textureUrl: typeof prop.textureUrl === "string" ? prop.textureUrl : "",
+    modelUrl: typeof prop.modelUrl === "string" ? prop.modelUrl : "",
+    modelFileName: typeof prop.modelFileName === "string" ? prop.modelFileName : "",
+    fitModelToTile: prop.fitModelToTile ?? true,
     width: Math.max(0.1, Math.min(3, numberOrFallback(prop.width, fallback.width))),
     height: Math.max(0.1, Math.min(4, numberOrFallback(prop.height, fallback.height))),
     depth: Math.max(0.1, Math.min(3, numberOrFallback(prop.depth, fallback.depth))),
@@ -465,6 +479,9 @@ export class EditorApp {
     const nameInput = this.panel.querySelector<HTMLInputElement>("[data-material='name']");
     const topColorInput = this.panel.querySelector<HTMLInputElement>("[data-material='topColor']");
     const sideColorInput = this.panel.querySelector<HTMLInputElement>("[data-material='sideColor']");
+    const sideCapColorInput = this.panel.querySelector<HTMLInputElement>("[data-material='sideCapColor']");
+    const sideFullColorInput = this.panel.querySelector<HTMLInputElement>("[data-material='sideFullColor']");
+    const sideHalfColorInput = this.panel.querySelector<HTMLInputElement>("[data-material='sideHalfColor']");
     const movementInput = this.panel.querySelector<HTMLInputElement>("[data-material='movementCost']");
     const lineOfSightInput = this.panel.querySelector<HTMLInputElement>("[data-material='blocksLineOfSight']");
     const topRuleInput = this.panel.querySelector<HTMLInputElement>("[data-material='topRule']");
@@ -475,6 +492,9 @@ export class EditorApp {
       name: nameInput?.value.trim() || fallback.name,
       topColor: topColorInput?.value || fallback.topColor,
       sideColor: sideColorInput?.value || fallback.sideColor,
+      sideCapColor: sideCapColorInput?.value || fallback.sideCapColor,
+      sideFullColor: sideFullColorInput?.value || fallback.sideFullColor,
+      sideHalfColor: sideHalfColorInput?.value || fallback.sideHalfColor,
       topRule: topRuleInput?.value.trim() || fallback.topRule,
       sideRule: sideRuleInput?.value.trim() || fallback.sideRule,
       movementCost: numberOrFallback(movementInput?.value, fallback.movementCost),
@@ -491,6 +511,7 @@ export class EditorApp {
     const fallback = this.selectedProp();
     const nameInput = this.panel.querySelector<HTMLInputElement>("[data-prop='name']");
     const roleInput = this.panel.querySelector<HTMLSelectElement>("[data-prop='role']");
+    const assetKindInput = this.panel.querySelector<HTMLSelectElement>("[data-prop='assetKind']");
     const colorInput = this.panel.querySelector<HTMLInputElement>("[data-prop='color']");
     const widthInput = this.panel.querySelector<HTMLInputElement>("[data-prop='width']");
     const heightInput = this.panel.querySelector<HTMLInputElement>("[data-prop='height']");
@@ -498,12 +519,14 @@ export class EditorApp {
     const blocksMovementInput = this.panel.querySelector<HTMLInputElement>("[data-prop='blocksMovement']");
     const blocksLineOfSightInput = this.panel.querySelector<HTMLInputElement>("[data-prop='blocksLineOfSight']");
     const coverBonusInput = this.panel.querySelector<HTMLInputElement>("[data-prop='coverBonus']");
+    const fitModelInput = this.panel.querySelector<HTMLInputElement>("[data-prop='fitModelToTile']");
     const notesInput = this.panel.querySelector<HTMLInputElement>("[data-prop='notes']");
     return normalizePropDefinition({
       ...fallback,
       id: propId,
       name: nameInput?.value.trim() || fallback.name,
       role: (roleInput?.value as PropDefinition["role"] | undefined) ?? fallback.role,
+      assetKind: (assetKindInput?.value as PropDefinition["assetKind"] | undefined) ?? fallback.assetKind,
       color: colorInput?.value || fallback.color,
       width: numberOrFallback(widthInput?.value, fallback.width),
       height: numberOrFallback(heightInput?.value, fallback.height),
@@ -511,6 +534,7 @@ export class EditorApp {
       blocksMovement: Boolean(blocksMovementInput?.checked),
       blocksLineOfSight: Boolean(blocksLineOfSightInput?.checked),
       coverBonus: numberOrFallback(coverBonusInput?.value, fallback.coverBonus),
+      fitModelToTile: fitModelInput?.checked ?? fallback.fitModelToTile,
       notes: textToConditions(notesInput?.value ?? conditionsToText(fallback.notes))
     });
   }
@@ -761,18 +785,26 @@ export class EditorApp {
             <input data-material="topColor" type="color" value="${escapeHtml(currentMaterial.topColor)}">
           </label>
           <label class="field">
-            <span>Side Color</span>
+            <span>Legacy Side</span>
             <input data-material="sideColor" type="color" value="${escapeHtml(currentMaterial.sideColor)}">
           </label>
         </div>
         <div class="asset-pair">
           <div class="asset-preview-head">
             <strong>Top</strong>
-            <img src="${escapeHtml(currentMaterial.topImageUrl)}" alt="">
+            ${assetPreviewImage(currentMaterial.topImageUrl)}
           </div>
           <div class="asset-preview-head">
-            <strong>Sides</strong>
-            <img src="${escapeHtml(currentMaterial.sideImageUrl)}" alt="">
+            <strong>Cap Side</strong>
+            ${assetPreviewImage(currentMaterial.sideCapImageUrl)}
+          </div>
+          <div class="asset-preview-head">
+            <strong>Full Side</strong>
+            ${assetPreviewImage(currentMaterial.sideFullImageUrl)}
+          </div>
+          <div class="asset-preview-head">
+            <strong>Half Side</strong>
+            ${assetPreviewImage(currentMaterial.sideHalfImageUrl)}
           </div>
         </div>
         <div class="compact-grid">
@@ -781,8 +813,30 @@ export class EditorApp {
             <input data-material-image="top" type="file" accept="image/*">
           </label>
           <label class="field">
-            <span>Side Texture</span>
-            <input data-material-image="side" type="file" accept="image/*">
+            <span>Cap Side Texture</span>
+            <input data-material-image="sideCap" type="file" accept="image/*">
+          </label>
+          <label class="field">
+            <span>Full Side Texture</span>
+            <input data-material-image="sideFull" type="file" accept="image/*">
+          </label>
+          <label class="field">
+            <span>Half Side Texture</span>
+            <input data-material-image="sideHalf" type="file" accept="image/*">
+          </label>
+        </div>
+        <div class="compact-grid">
+          <label class="field">
+            <span>Cap Side Color</span>
+            <input data-material="sideCapColor" type="color" value="${escapeHtml(currentMaterial.sideCapColor)}">
+          </label>
+          <label class="field">
+            <span>Full Side Color</span>
+            <input data-material="sideFullColor" type="color" value="${escapeHtml(currentMaterial.sideFullColor)}">
+          </label>
+          <label class="field">
+            <span>Half Side Color</span>
+            <input data-material="sideHalfColor" type="color" value="${escapeHtml(currentMaterial.sideHalfColor)}">
           </label>
         </div>
         <label class="field">
@@ -828,17 +882,29 @@ export class EditorApp {
             </select>
           </label>
           <label class="field">
+            <span>Render As</span>
+            <select data-prop="assetKind">
+              ${(["box", "glb"] as PropDefinition["assetKind"][])
+                .map((assetKind) => `<option value="${assetKind}" ${currentProp.assetKind === assetKind ? "selected" : ""}>${assetKind}</option>`)
+                .join("")}
+            </select>
+          </label>
+          <label class="field">
             <span>Color</span>
             <input data-prop="color" type="color" value="${escapeHtml(currentProp.color)}">
           </label>
           <label class="field">
-            <span>Texture</span>
+            <span>Box Texture</span>
             <input data-prop-image type="file" accept="image/*">
+          </label>
+          <label class="field">
+            <span>GLB Model</span>
+            <input data-prop-model type="file" accept=".glb,model/gltf-binary">
           </label>
         </div>
         <div class="asset-preview-head">
-          <strong>Texture Preview</strong>
-          <img src="${escapeHtml(currentProp.textureUrl)}" alt="">
+          <strong>${currentProp.assetKind === "glb" ? currentProp.modelFileName || "GLB Model" : "Texture Preview"}</strong>
+          ${assetPreviewImage(currentProp.textureUrl)}
         </div>
         <div class="stat-grid">
           <label>
@@ -865,6 +931,10 @@ export class EditorApp {
         <label class="check-row">
           <input data-prop="blocksLineOfSight" type="checkbox" ${currentProp.blocksLineOfSight ? "checked" : ""}>
           <span>Blocks line of sight.</span>
+        </label>
+        <label class="check-row">
+          <input data-prop="fitModelToTile" type="checkbox" ${currentProp.fitModelToTile ? "checked" : ""}>
+          <span>Fit uploaded GLB to this prop's one-square footprint.</span>
         </label>
         <label class="field">
           <span>Notes</span>
@@ -905,7 +975,7 @@ export class EditorApp {
                 <div class="class-section-card">
                   <div class="class-section-head">
                     <strong>${section === "body" ? "body / arms" : section}</strong>
-                    <img src="${escapeHtml(sectionDefinition.imageUrl)}" alt="">
+                    ${assetPreviewImage(sectionDefinition.imageUrl)}
                   </div>
                   <label class="field">
                     <span>Image</span>
@@ -1046,6 +1116,10 @@ export class EditorApp {
       input.addEventListener("change", () => this.handlePropImageUpload(input));
     });
 
+    this.panel.querySelectorAll<HTMLInputElement>("[data-prop-model]").forEach((input) => {
+      input.addEventListener("change", () => this.handlePropModelUpload(input));
+    });
+
     this.panel.querySelectorAll<HTMLInputElement>("[data-ground-texture]").forEach((input) => {
       input.addEventListener("change", () => this.handleGroundTextureUpload(input));
     });
@@ -1090,7 +1164,7 @@ export class EditorApp {
   private handleMaterialImageUpload(input: HTMLInputElement): void {
     const file = input.files?.[0];
     const target = input.dataset.materialImage;
-    if (!file || (target !== "top" && target !== "side")) {
+    if (!file || (target !== "top" && target !== "sideCap" && target !== "sideFull" && target !== "sideHalf")) {
       return;
     }
     if (!file.type.startsWith("image/")) {
@@ -1102,8 +1176,12 @@ export class EditorApp {
       const draft = this.readMaterialDraft();
       if (target === "top") {
         draft.topImageUrl = String(reader.result ?? "");
-      } else {
-        draft.sideImageUrl = String(reader.result ?? "");
+      } else if (target === "sideCap") {
+        draft.sideCapImageUrl = String(reader.result ?? "");
+      } else if (target === "sideFull") {
+        draft.sideFullImageUrl = String(reader.result ?? "");
+      } else if (target === "sideHalf") {
+        draft.sideHalfImageUrl = String(reader.result ?? "");
       }
       this.replaceMaterialDefinition(draft);
       this.updatePanel();
@@ -1134,6 +1212,33 @@ export class EditorApp {
     });
     reader.addEventListener("error", () => {
       this.flash("Prop texture upload failed.");
+    });
+    reader.readAsDataURL(file);
+  }
+
+  private handlePropModelUpload(input: HTMLInputElement): void {
+    const file = input.files?.[0];
+    if (!file) {
+      return;
+    }
+    const isGlb = file.name.toLowerCase().endsWith(".glb") || file.type === "model/gltf-binary";
+    if (!isGlb) {
+      this.flash("Prop model upload needs a .glb file.");
+      return;
+    }
+    const reader = new FileReader();
+    reader.addEventListener("load", () => {
+      const draft = this.readPropDraft();
+      draft.assetKind = "glb";
+      draft.modelUrl = String(reader.result ?? "");
+      draft.modelFileName = file.name;
+      draft.fitModelToTile = true;
+      this.replacePropDefinition(draft);
+      this.updatePanel();
+      this.flash(`Updated ${draft.name} GLB model.`);
+    });
+    reader.addEventListener("error", () => {
+      this.flash("Prop model upload failed.");
     });
     reader.readAsDataURL(file);
   }

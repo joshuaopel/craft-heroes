@@ -33,8 +33,14 @@ export interface EnvironmentMaterialDefinition {
   name: string;
   topColor: string;
   sideColor: string;
+  sideCapColor: string;
+  sideFullColor: string;
+  sideHalfColor: string;
   topImageUrl: string;
   sideImageUrl: string;
+  sideCapImageUrl: string;
+  sideFullImageUrl: string;
+  sideHalfImageUrl: string;
   topRule: string;
   sideRule: string;
   movementCost: number;
@@ -45,8 +51,12 @@ export interface PropDefinition {
   id: PropDefinitionId;
   name: string;
   role: "blocker" | "cover" | "decor";
+  assetKind: "box" | "glb";
   color: string;
   textureUrl: string;
+  modelUrl: string;
+  modelFileName: string;
+  fitModelToTile: boolean;
   width: number;
   height: number;
   depth: number;
