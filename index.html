@@ -1,0 +1,1797 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Craft Heroes Prototype</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --ink: #eef7ef;
+      --muted: #9caea3;
+      --panel: rgba(12, 17, 18, 0.84);
+      --panel-strong: rgba(13, 19, 20, 0.94);
+      --line: rgba(238, 247, 239, 0.16);
+      --shadow: rgba(0, 0, 0, 0.38);
+      --accent: #60d7e4;
+      --danger: #ff6d62;
+      --heal: #45d483;
+      --warrior: #e05c4f;
+      --mage: #9b79f2;
+      --ranger: #f2bd55;
+      --healer: #45d483;
+      --tile: #8fc265;
+      --stone: #8f958d;
+      --sand: #d0b66b;
+      --water: #5198ba;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body,
+    #game {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: #101614;
+    }
+
+    body {
+      color: var(--ink);
+    }
+
+    #game canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+
+    .hud {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+    }
+
+    .objective-chip,
+    .status-strip,
+    .command-panel,
+    .prompt,
+    .panel-toggle {
+      pointer-events: auto;
+    }
+
+    .objective-chip {
+      position: absolute;
+      top: 16px;
+      left: 16px;
+      min-width: 230px;
+      max-width: min(360px, calc(100vw - 32px));
+      padding: 12px 14px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: linear-gradient(180deg, rgba(15, 23, 23, 0.92), rgba(12, 18, 18, 0.74));
+      box-shadow: 0 16px 40px var(--shadow);
+      backdrop-filter: blur(12px);
+    }
+
+    .objective-chip strong {
+      display: block;
+      font-size: 15px;
+      letter-spacing: 0;
+    }
+
+    .objective-chip span {
+      display: block;
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.35;
+    }
+
+    .status-strip {
+      position: absolute;
+      top: 16px;
+      right: 16px;
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      box-shadow: 0 16px 40px var(--shadow);
+      backdrop-filter: blur(12px);
+    }
+
+    .unit-pill {
+      min-width: 132px;
+    }
+
+    .unit-pill b {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 12px;
+      font-weight: 750;
+    }
+
+    .meter {
+      position: relative;
+      height: 7px;
+      margin-top: 7px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.12);
+    }
+
+    .meter > i {
+      display: block;
+      width: 100%;
+      height: 100%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, #45d483, #f1c15b);
+      transform-origin: left center;
+    }
+
+    .command-panel {
+      position: absolute;
+      top: 88px;
+      right: 16px;
+      bottom: 16px;
+      width: min(348px, calc(100vw - 32px));
+      display: flex;
+      flex-direction: column;
+      gap: 13px;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel-strong);
+      box-shadow: 0 18px 48px var(--shadow);
+      backdrop-filter: blur(14px);
+      overflow: auto;
+    }
+
+    .panel-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: flex-start;
+    }
+
+    .panel-head h1 {
+      margin: 0;
+      font-size: 18px;
+      line-height: 1.15;
+      letter-spacing: 0;
+    }
+
+    .panel-head p,
+    .hero-summary p,
+    .preview p {
+      margin: 4px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.35;
+    }
+
+    button {
+      min-height: 34px;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      border-radius: 7px;
+      background: rgba(255, 255, 255, 0.08);
+      color: var(--ink);
+      font: inherit;
+      font-size: 12px;
+      font-weight: 760;
+      cursor: pointer;
+      transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
+    }
+
+    button:hover:not(:disabled) {
+      border-color: rgba(96, 215, 228, 0.62);
+      background: rgba(96, 215, 228, 0.14);
+      transform: translateY(-1px);
+    }
+
+    button:active:not(:disabled) {
+      transform: translateY(0);
+    }
+
+    button:disabled {
+      color: rgba(238, 247, 239, 0.34);
+      cursor: not-allowed;
+    }
+
+    .quiet-button {
+      padding: 7px 10px;
+    }
+
+    .hero-summary {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      padding-bottom: 4px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .readout {
+      min-width: 0;
+    }
+
+    .readout span {
+      display: block;
+      color: var(--muted);
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .readout b {
+      display: block;
+      margin-top: 3px;
+      font-size: 13px;
+      overflow-wrap: anywhere;
+    }
+
+    .section-stack {
+      display: grid;
+      gap: 10px;
+    }
+
+    .section-row {
+      display: grid;
+      gap: 8px;
+      padding-top: 1px;
+    }
+
+    .section-title {
+      display: grid;
+      grid-template-columns: 1fr 34px 34px;
+      gap: 7px;
+      align-items: center;
+    }
+
+    .section-title b {
+      font-size: 12px;
+    }
+
+    .section-title small {
+      display: block;
+      margin-top: 2px;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 560;
+    }
+
+    .face-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 6px;
+    }
+
+    .face-chip {
+      min-width: 0;
+      padding: 7px 5px;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      border-radius: 7px;
+      background: rgba(255, 255, 255, 0.06);
+      text-align: center;
+    }
+
+    .face-chip.aim {
+      border-color: rgba(96, 215, 228, 0.72);
+      box-shadow: inset 0 0 0 1px rgba(96, 215, 228, 0.28);
+    }
+
+    .face-chip.defend {
+      border-color: rgba(255, 109, 98, 0.72);
+      box-shadow: inset 0 0 0 1px rgba(255, 109, 98, 0.24);
+    }
+
+    .face-chip span {
+      display: block;
+      font-size: 10px;
+      color: var(--muted);
+    }
+
+    .face-chip b {
+      display: block;
+      margin-top: 3px;
+      font-size: 11px;
+      overflow-wrap: anywhere;
+    }
+
+    .actions {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 8px;
+    }
+
+    .actions button.primary {
+      background: rgba(96, 215, 228, 0.16);
+      border-color: rgba(96, 215, 228, 0.46);
+    }
+
+    .actions button.end {
+      background: rgba(242, 189, 85, 0.16);
+      border-color: rgba(242, 189, 85, 0.42);
+    }
+
+    .preview {
+      border-top: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+      padding: 10px 0;
+    }
+
+    .preview strong {
+      display: block;
+      font-size: 12px;
+    }
+
+    .preview-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    .mini-readout {
+      min-width: 0;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.3;
+    }
+
+    .mini-readout b {
+      display: block;
+      color: var(--ink);
+      font-size: 12px;
+      overflow-wrap: anywhere;
+    }
+
+    details {
+      border-top: 1px solid var(--line);
+      padding-top: 10px;
+    }
+
+    summary {
+      cursor: pointer;
+      color: var(--ink);
+      font-size: 12px;
+      font-weight: 760;
+    }
+
+    .class-table {
+      display: grid;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .class-line {
+      display: grid;
+      grid-template-columns: 13px 1fr;
+      gap: 8px;
+      align-items: start;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.35;
+    }
+
+    .swatch {
+      width: 13px;
+      height: 13px;
+      margin-top: 1px;
+      border-radius: 4px;
+      border: 1px solid rgba(255, 255, 255, 0.18);
+    }
+
+    .log {
+      display: grid;
+      gap: 7px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.35;
+    }
+
+    .log li {
+      padding-left: 9px;
+      border-left: 2px solid rgba(255, 255, 255, 0.12);
+    }
+
+    .prompt {
+      position: absolute;
+      left: 50%;
+      bottom: 18px;
+      max-width: min(560px, calc(100vw - 32px));
+      padding: 10px 14px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: rgba(9, 13, 14, 0.78);
+      color: var(--ink);
+      box-shadow: 0 14px 34px var(--shadow);
+      transform: translateX(-50%);
+      backdrop-filter: blur(10px);
+      font-size: 12px;
+      line-height: 1.35;
+      text-align: center;
+    }
+
+    .panel-toggle {
+      display: none;
+      position: absolute;
+      right: 16px;
+      bottom: 18px;
+      width: 82px;
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
+    @media (max-width: 860px) {
+      .objective-chip {
+        top: 10px;
+        left: 10px;
+        min-width: 0;
+        width: calc(100vw - 20px);
+        max-width: none;
+      }
+
+      .status-strip {
+        top: 86px;
+        right: auto;
+        left: 10px;
+        bottom: auto;
+        max-width: calc(100vw - 20px);
+        overflow-x: auto;
+      }
+
+      .command-panel {
+        top: auto;
+        left: 10px;
+        right: 10px;
+        bottom: 10px;
+        width: auto;
+        max-height: 70vh;
+        transform: translateY(calc(100% - 58px));
+        transition: transform 180ms ease;
+      }
+
+      .command-panel.open {
+        transform: translateY(0);
+      }
+
+      .panel-toggle {
+        display: block;
+        bottom: 78px;
+      }
+
+      .prompt {
+        bottom: 116px;
+      }
+    }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="game"></div>
+  <div class="hud" aria-live="polite">
+    <div class="objective-chip">
+      <strong>Craft Heroes</strong>
+      <span id="turn-chip">Loading board...</span>
+    </div>
+
+    <div class="status-strip" id="status-strip"></div>
+
+    <aside class="command-panel" id="command-panel">
+      <div class="panel-head">
+        <div>
+          <h1 id="active-name">Craft Heroes</h1>
+          <p id="active-note">Rotate a section, claim height, then commit.</p>
+        </div>
+        <button class="quiet-button" id="reset-button" type="button">Reset</button>
+      </div>
+
+      <div class="hero-summary" id="hero-summary"></div>
+      <div class="section-stack" id="section-stack"></div>
+
+      <div class="actions">
+        <button class="primary" id="move-button" type="button">Move</button>
+        <button class="primary" id="attack-button" type="button">Attack</button>
+        <button id="mend-button" type="button">Mend</button>
+        <button id="guard-button" type="button">Guard</button>
+        <button class="end" id="end-button" type="button">End Turn</button>
+        <button id="inspect-button" type="button">Inspect</button>
+      </div>
+
+      <div class="preview" id="preview"></div>
+
+      <details>
+        <summary>Class stats</summary>
+        <div class="class-table" id="class-table"></div>
+      </details>
+
+      <ul class="log" id="log"></ul>
+    </aside>
+
+    <button class="panel-toggle" id="panel-toggle" type="button">Panel</button>
+    <div class="prompt" id="prompt">Loading terrain...</div>
+  </div>
+
+  <script type="module">
+    import * as THREE from "three";
+    import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+    const boardWidth = 10;
+    const boardDepth = 8;
+    const tileSize = 1.08;
+    const heightStep = 0.28;
+    const baseTileHeight = 0.18;
+    const sectionNames = ["head", "body", "legs"];
+    const dirOrder = ["S", "E", "N", "W"];
+    const dirVectors = {
+      S: { x: 0, z: 1 },
+      E: { x: 1, z: 0 },
+      N: { x: 0, z: -1 },
+      W: { x: -1, z: 0 }
+    };
+
+    const classInfo = {
+      Warrior: {
+        short: "W",
+        color: "#e05c4f",
+        body: { name: "Iron Swing", range: 1, damage: 5, los: false },
+        head: { attack: 0, range: 0, defense: 1, note: "steady guard" },
+        legs: { move: 3, climb: 1, dodge: 0, defense: 1, note: "armored step" },
+        defense: 2
+      },
+      Healer: {
+        short: "H",
+        color: "#45d483",
+        body: { name: "Mend Strike", range: 3, damage: 2, heal: 5, los: true },
+        head: { attack: 0, range: 0, defense: 1, note: "ward focus" },
+        legs: { move: 4, climb: 1, dodge: 0, defense: 0, note: "steady march" },
+        defense: 1
+      },
+      Mage: {
+        short: "M",
+        color: "#9b79f2",
+        body: { name: "Arc Bolt", range: 3, damage: 4, los: true, arc: true },
+        head: { attack: 1, range: 0, defense: 0, note: "power focus" },
+        legs: { move: 4, climb: 2, dodge: 0, defense: 0, note: "phase climb" },
+        defense: 0
+      },
+      Ranger: {
+        short: "R",
+        color: "#f2bd55",
+        body: { name: "Long Shot", range: 4, damage: 3, los: true },
+        head: { attack: 0, range: 1, defense: 0, note: "aim focus" },
+        legs: { move: 5, climb: 2, dodge: 1, defense: 0, note: "fast footwork" },
+        defense: 1
+      }
+    };
+
+    const terrain = [
+      [1, 1, 1, 2, 2, 1, 0, 0, 1, 1],
+      [1, 0, 1, 2, 3, 2, 1, 1, 1, 2],
+      [1, 0, 1, 1, 2, 2, 1, 0, 1, 2],
+      [1, 1, 1, 0, 0, 1, 1, 1, 1, 1],
+      [0, 1, 1, 0, 1, 1, 2, 2, 1, 0],
+      [0, 1, 2, 2, 2, 1, 2, 3, 2, 1],
+      [1, 1, 2, 3, 2, 1, 1, 2, 1, 1],
+      [1, 0, 1, 2, 1, 0, 1, 1, 1, 0]
+    ];
+
+    const terrainType = [
+      ["grass", "grass", "grass", "stone", "stone", "grass", "water", "water", "grass", "grass"],
+      ["grass", "sand", "grass", "stone", "stone", "stone", "grass", "grass", "grass", "stone"],
+      ["grass", "sand", "grass", "grass", "stone", "stone", "grass", "sand", "grass", "stone"],
+      ["grass", "grass", "grass", "sand", "sand", "grass", "grass", "grass", "grass", "grass"],
+      ["water", "grass", "grass", "sand", "grass", "grass", "stone", "stone", "grass", "water"],
+      ["water", "grass", "stone", "stone", "stone", "grass", "stone", "stone", "stone", "grass"],
+      ["grass", "grass", "stone", "stone", "stone", "grass", "grass", "stone", "grass", "grass"],
+      ["grass", "sand", "grass", "stone", "grass", "sand", "grass", "grass", "grass", "sand"]
+    ];
+
+    const blockers = new Map([
+      ["4,1", "stone"],
+      ["5,2", "wall"],
+      ["3,3", "stone"],
+      ["6,4", "wall"],
+      ["2,5", "stone"],
+      ["7,5", "tower"],
+      ["8,2", "tree"]
+    ]);
+
+    const initialUnits = [
+      {
+        id: "blue",
+        name: "Azure Cubist",
+        team: "Azure",
+        color: "#60d7e4",
+        x: 1,
+        z: 6,
+        hp: 24,
+        maxHp: 24,
+        guard: false,
+        rotations: { head: 0, body: 0, legs: 0 },
+        faces: {
+          head: ["Healer", "Ranger", "Mage", "Warrior"],
+          body: ["Warrior", "Healer", "Ranger", "Mage"],
+          legs: ["Ranger", "Warrior", "Healer", "Mage"]
+        }
+      },
+      {
+        id: "red",
+        name: "Crimson Block",
+        team: "Crimson",
+        color: "#ff6d62",
+        x: 8,
+        z: 1,
+        hp: 24,
+        maxHp: 24,
+        guard: false,
+        rotations: { head: 2, body: 2, legs: 2 },
+        faces: {
+          head: ["Warrior", "Mage", "Healer", "Ranger"],
+          body: ["Ranger", "Mage", "Warrior", "Healer"],
+          legs: ["Warrior", "Ranger", "Mage", "Healer"]
+        }
+      }
+    ];
+
+    const state = {
+      units: structuredClone(initialUnits),
+      activeIndex: 0,
+      round: 1,
+      twists: 2,
+      moveUsed: false,
+      actionUsed: false,
+      mode: "inspect",
+      hover: null,
+      gameOver: false,
+      log: []
+    };
+
+    const dom = {
+      game: document.querySelector("#game"),
+      turnChip: document.querySelector("#turn-chip"),
+      statusStrip: document.querySelector("#status-strip"),
+      activeName: document.querySelector("#active-name"),
+      activeNote: document.querySelector("#active-note"),
+      heroSummary: document.querySelector("#hero-summary"),
+      sectionStack: document.querySelector("#section-stack"),
+      preview: document.querySelector("#preview"),
+      classTable: document.querySelector("#class-table"),
+      log: document.querySelector("#log"),
+      prompt: document.querySelector("#prompt"),
+      commandPanel: document.querySelector("#command-panel"),
+      moveButton: document.querySelector("#move-button"),
+      attackButton: document.querySelector("#attack-button"),
+      mendButton: document.querySelector("#mend-button"),
+      guardButton: document.querySelector("#guard-button"),
+      endButton: document.querySelector("#end-button"),
+      inspectButton: document.querySelector("#inspect-button"),
+      resetButton: document.querySelector("#reset-button"),
+      panelToggle: document.querySelector("#panel-toggle")
+    };
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color("#7bb6c5");
+    scene.fog = new THREE.Fog("#7bb6c5", 13, 26);
+
+    const camera = new THREE.PerspectiveCamera(47, window.innerWidth / window.innerHeight, 0.1, 100);
+    camera.position.set(6.4, 6.1, 8.2);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    dom.game.appendChild(renderer.domElement);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.08;
+    controls.minDistance = 6;
+    controls.maxDistance = 18;
+    controls.maxPolarAngle = Math.PI * 0.43;
+    controls.target.set(0.1, 0.6, -0.1);
+
+    renderer.domElement.addEventListener("webglcontextlost", (event) => {
+      event.preventDefault();
+      dom.prompt.textContent = "WebGL context paused. Reload the page to restore the board.";
+    });
+
+    renderer.domElement.addEventListener("webglcontextrestored", () => {
+      window.location.reload();
+    });
+
+    scene.add(new THREE.HemisphereLight("#e6fff2", "#405246", 1.25));
+    const sun = new THREE.DirectionalLight("#fff0ce", 2.1);
+    sun.position.set(-5, 8, 6);
+    sun.castShadow = true;
+    sun.shadow.mapSize.set(2048, 2048);
+    sun.shadow.camera.near = 0.5;
+    sun.shadow.camera.far = 25;
+    sun.shadow.camera.left = -8;
+    sun.shadow.camera.right = 8;
+    sun.shadow.camera.top = 8;
+    sun.shadow.camera.bottom = -8;
+    scene.add(sun);
+
+    const fill = new THREE.DirectionalLight("#89d7ff", 0.75);
+    fill.position.set(6, 4, -5);
+    scene.add(fill);
+
+    const boardGroup = new THREE.Group();
+    const highlightGroup = new THREE.Group();
+    const fxGroup = new THREE.Group();
+    scene.add(boardGroup, highlightGroup, fxGroup);
+
+    const raycaster = new THREE.Raycaster();
+    const pointer = new THREE.Vector2();
+    const clickable = [];
+    const tileMeshes = new Map();
+    const unitViews = new Map();
+    const temporaryFx = [];
+
+    const materials = {
+      terrainSide: new THREE.MeshStandardMaterial({ color: "#6f765d", roughness: 0.86 }),
+      terrainBottom: new THREE.MeshStandardMaterial({ color: "#49392c", roughness: 0.96 }),
+      grass: new THREE.MeshStandardMaterial({ color: "#8fc265", roughness: 0.72 }),
+      stone: new THREE.MeshStandardMaterial({ color: "#8f958d", roughness: 0.82 }),
+      sand: new THREE.MeshStandardMaterial({ color: "#d0b66b", roughness: 0.78 }),
+      water: new THREE.MeshStandardMaterial({ color: "#5198ba", roughness: 0.48, metalness: 0.05 }),
+      blockerStone: new THREE.MeshStandardMaterial({ color: "#5e6760", roughness: 0.86 }),
+      blockerWall: new THREE.MeshStandardMaterial({ color: "#7a756b", roughness: 0.84 }),
+      blockerTree: new THREE.MeshStandardMaterial({ color: "#3e8a58", roughness: 0.76 }),
+      neutralTop: new THREE.MeshStandardMaterial({ color: "#f4f0db", roughness: 0.7 }),
+      neutralBottom: new THREE.MeshStandardMaterial({ color: "#2b3130", roughness: 0.8 }),
+      ring: new THREE.MeshBasicMaterial({ color: "#ffffff", transparent: true, opacity: 0.72 }),
+      hover: new THREE.MeshBasicMaterial({ color: "#ffffff", transparent: true, opacity: 0.2, depthWrite: false }),
+      move: new THREE.MeshBasicMaterial({ color: "#60d7e4", transparent: true, opacity: 0.34, depthWrite: false }),
+      attack: new THREE.MeshBasicMaterial({ color: "#ff6d62", transparent: true, opacity: 0.34, depthWrite: false }),
+      invalid: new THREE.MeshBasicMaterial({ color: "#f2bd55", transparent: true, opacity: 0.3, depthWrite: false }),
+      selfHeal: new THREE.MeshBasicMaterial({ color: "#45d483", transparent: true, opacity: 0.32, depthWrite: false })
+    };
+
+    const classMaterials = Object.fromEntries(
+      Object.entries(classInfo).map(([name, info]) => [
+        name,
+        new THREE.MeshStandardMaterial({
+          color: info.color,
+          roughness: 0.62,
+          metalness: 0.03
+        })
+      ])
+    );
+
+    function tileKey(x, z) {
+      return `${x},${z}`;
+    }
+
+    function insideBoard(x, z) {
+      return x >= 0 && x < boardWidth && z >= 0 && z < boardDepth;
+    }
+
+    function gridHeight(x, z) {
+      return terrain[z][x];
+    }
+
+    function tileVisualHeight(x, z) {
+      return baseTileHeight + gridHeight(x, z) * heightStep;
+    }
+
+    function tileTopY(x, z) {
+      return tileVisualHeight(x, z);
+    }
+
+    function worldPositionForTile(x, z, y = 0) {
+      return new THREE.Vector3(
+        (x - (boardWidth - 1) / 2) * tileSize,
+        y,
+        (z - (boardDepth - 1) / 2) * tileSize
+      );
+    }
+
+    function colorForClass(name) {
+      return classInfo[name].color;
+    }
+
+    function dirIndex(dir) {
+      return dirOrder.indexOf(dir);
+    }
+
+    function directionBetween(from, to) {
+      const dx = to.x - from.x;
+      const dz = to.z - from.z;
+      if (Math.abs(dx) > Math.abs(dz)) {
+        return dx > 0 ? "E" : "W";
+      }
+      if (dz !== 0) {
+        return dz > 0 ? "S" : "N";
+      }
+      return "S";
+    }
+
+    function classFacing(unit, section, dir) {
+      const worldSide = dirIndex(dir);
+      const rotation = unit.rotations[section] % 4;
+      const localSide = (worldSide - rotation + 4) % 4;
+      return unit.faces[section][localSide];
+    }
+
+    function sectionMap(unit, section) {
+      return Object.fromEntries(dirOrder.map((dir) => [dir, classFacing(unit, section, dir)]));
+    }
+
+    function activeUnit() {
+      return state.units[state.activeIndex];
+    }
+
+    function otherUnit() {
+      return state.units[(state.activeIndex + 1) % state.units.length];
+    }
+
+    function unitAt(x, z) {
+      return state.units.find((unit) => unit.hp > 0 && unit.x === x && unit.z === z) || null;
+    }
+
+    function isBlocked(x, z) {
+      return blockers.has(tileKey(x, z));
+    }
+
+    function gridDistance(a, b) {
+      return Math.abs(a.x - b.x) + Math.abs(a.z - b.z);
+    }
+
+    function createTileMaterials(topType) {
+      const top = materials[topType] || materials.grass;
+      return [
+        materials.terrainSide,
+        materials.terrainSide,
+        top,
+        materials.terrainBottom,
+        materials.terrainSide,
+        materials.terrainSide
+      ];
+    }
+
+    function addTerrain() {
+      for (let z = 0; z < boardDepth; z += 1) {
+        for (let x = 0; x < boardWidth; x += 1) {
+          const height = tileVisualHeight(x, z);
+          const geometry = new THREE.BoxGeometry(tileSize * 0.96, height, tileSize * 0.96);
+          const mesh = new THREE.Mesh(geometry, createTileMaterials(terrainType[z][x]));
+          const pos = worldPositionForTile(x, z, height / 2);
+          mesh.position.copy(pos);
+          mesh.receiveShadow = true;
+          mesh.castShadow = true;
+          mesh.userData = { kind: "tile", x, z };
+          boardGroup.add(mesh);
+          tileMeshes.set(tileKey(x, z), mesh);
+          clickable.push(mesh);
+        }
+      }
+
+      blockers.forEach((kind, key) => {
+        const [x, z] = key.split(",").map(Number);
+        const baseY = tileTopY(x, z);
+        const pos = worldPositionForTile(x, z, baseY);
+        let mesh;
+
+        if (kind === "tree") {
+          const trunk = new THREE.Mesh(
+            new THREE.BoxGeometry(0.28, 0.72, 0.28),
+            new THREE.MeshStandardMaterial({ color: "#65482f", roughness: 0.88 })
+          );
+          trunk.position.set(pos.x, baseY + 0.36, pos.z);
+          trunk.castShadow = true;
+          trunk.receiveShadow = true;
+          trunk.userData = { kind: "tile", x, z };
+          boardGroup.add(trunk);
+          clickable.push(trunk);
+
+          mesh = new THREE.Mesh(
+            new THREE.BoxGeometry(0.82, 0.78, 0.82),
+            materials.blockerTree
+          );
+          mesh.position.set(pos.x, baseY + 0.98, pos.z);
+        } else {
+          const blockerHeight = kind === "tower" ? 1.18 : 0.82;
+          mesh = new THREE.Mesh(
+            new THREE.BoxGeometry(0.78, blockerHeight, 0.78),
+            kind === "wall" ? materials.blockerWall : materials.blockerStone
+          );
+          mesh.position.set(pos.x, baseY + blockerHeight / 2, pos.z);
+        }
+
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        mesh.userData = { kind: "tile", x, z };
+        boardGroup.add(mesh);
+        clickable.push(mesh);
+      });
+
+      const ground = new THREE.Mesh(
+        new THREE.PlaneGeometry(24, 24),
+        new THREE.MeshStandardMaterial({ color: "#62745c", roughness: 0.96 })
+      );
+      ground.rotation.x = -Math.PI / 2;
+      ground.position.y = -0.025;
+      ground.receiveShadow = true;
+      boardGroup.add(ground);
+    }
+
+    function makeLabelTexture(text, background) {
+      const canvas = document.createElement("canvas");
+      canvas.width = 128;
+      canvas.height = 128;
+      const ctx = canvas.getContext("2d");
+      ctx.fillStyle = background;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = "rgba(0, 0, 0, 0.22)";
+      ctx.fillRect(0, 86, canvas.width, 42);
+      ctx.fillStyle = "#ffffff";
+      ctx.font = "800 68px Arial";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(text, 64, 55);
+      ctx.fillStyle = "rgba(255, 255, 255, 0.82)";
+      ctx.font = "700 20px Arial";
+      ctx.fillText("FACE", 64, 106);
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.colorSpace = THREE.SRGBColorSpace;
+      return texture;
+    }
+
+    function addFaceLabels(sectionGroup, sideClasses, sectionHeight) {
+      sideClasses.forEach((className, index) => {
+        const info = classInfo[className];
+        const material = new THREE.MeshBasicMaterial({
+          map: makeLabelTexture(info.short, info.color),
+          transparent: true,
+          depthWrite: false,
+          toneMapped: false
+        });
+        const label = new THREE.Mesh(new THREE.PlaneGeometry(0.34, sectionHeight * 0.46), material);
+        label.renderOrder = 10;
+        if (index === 0) {
+          label.position.set(0, 0.01, 0.353);
+          label.rotation.y = 0;
+        } else if (index === 1) {
+          label.position.set(0.353, 0.01, 0);
+          label.rotation.y = Math.PI / 2;
+        } else if (index === 2) {
+          label.position.set(0, 0.01, -0.353);
+          label.rotation.y = Math.PI;
+        } else {
+          label.position.set(-0.353, 0.01, 0);
+          label.rotation.y = -Math.PI / 2;
+        }
+        sectionGroup.add(label);
+      });
+    }
+
+    function createSectionMesh(unit, section, sectionHeight, width) {
+      const sides = unit.faces[section];
+      const mesh = new THREE.Mesh(
+        new THREE.BoxGeometry(width, sectionHeight, width),
+        [
+          classMaterials[sides[1]],
+          classMaterials[sides[3]],
+          materials.neutralTop,
+          materials.neutralBottom,
+          classMaterials[sides[0]],
+          classMaterials[sides[2]]
+        ]
+      );
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      mesh.userData = { kind: "unit", unitId: unit.id };
+      const group = new THREE.Group();
+      group.add(mesh);
+      addFaceLabels(group, sides, sectionHeight);
+      return group;
+    }
+
+    function createHealthBar(unit) {
+      const group = new THREE.Group();
+      const back = new THREE.Mesh(
+        new THREE.PlaneGeometry(0.92, 0.09),
+        new THREE.MeshBasicMaterial({ color: "#111819", transparent: true, opacity: 0.84, depthWrite: false })
+      );
+      const fill = new THREE.Mesh(
+        new THREE.PlaneGeometry(0.86, 0.052),
+        new THREE.MeshBasicMaterial({ color: unit.color, transparent: true, opacity: 0.96, depthWrite: false })
+      );
+      fill.position.z = 0.003;
+      fill.position.x = 0;
+      group.add(back, fill);
+      group.userData.fill = fill;
+      group.renderOrder = 20;
+      return group;
+    }
+
+    function createUnit(unit) {
+      const group = new THREE.Group();
+      const sections = {};
+      const legs = createSectionMesh(unit, "legs", 0.34, 0.72);
+      const body = createSectionMesh(unit, "body", 0.42, 0.78);
+      const head = createSectionMesh(unit, "head", 0.34, 0.66);
+      legs.position.y = 0.17;
+      body.position.y = 0.58;
+      head.position.y = 0.98;
+      sections.legs = legs;
+      sections.body = body;
+      sections.head = head;
+      group.add(legs, body, head);
+
+      const ring = new THREE.Mesh(
+        new THREE.TorusGeometry(0.5, 0.018, 8, 56),
+        materials.ring.clone()
+      );
+      ring.rotation.x = Math.PI / 2;
+      ring.position.y = 0.025;
+      group.add(ring);
+
+      const teamFlag = new THREE.Mesh(
+        new THREE.BoxGeometry(0.78, 0.045, 0.78),
+        new THREE.MeshBasicMaterial({ color: unit.color, transparent: true, opacity: 0.62 })
+      );
+      teamFlag.position.y = 1.2;
+      group.add(teamFlag);
+
+      const healthBar = createHealthBar(unit);
+      healthBar.position.y = 1.45;
+      group.add(healthBar);
+
+      group.userData = { kind: "unit", unitId: unit.id };
+      scene.add(group);
+      unitViews.set(unit.id, {
+        group,
+        sections,
+        ring,
+        healthBar,
+        healthFill: healthBar.userData.fill,
+        target: new THREE.Vector3()
+      });
+
+      group.traverse((child) => {
+        if (child.isMesh) {
+          child.userData.kind = child.userData.kind || "unit";
+          child.userData.unitId = unit.id;
+          clickable.push(child);
+        }
+      });
+      updateUnitView(unit, true);
+    }
+
+    function updateUnitView(unit, instant = false) {
+      const view = unitViews.get(unit.id);
+      if (!view) {
+        return;
+      }
+      const pos = worldPositionForTile(unit.x, unit.z, tileTopY(unit.x, unit.z) + 0.02);
+      view.target.copy(pos);
+      if (instant) {
+        view.group.position.copy(pos);
+      }
+      sectionNames.forEach((section) => {
+        view.sections[section].rotation.y = unit.rotations[section] * Math.PI / 2;
+      });
+      view.ring.material.color.set(unit.id === activeUnit().id && !state.gameOver ? unit.color : "#ffffff");
+      view.ring.material.opacity = unit.id === activeUnit().id && !state.gameOver ? 0.88 : 0.28;
+      const hpScale = Math.max(0.02, unit.hp / unit.maxHp);
+      view.healthFill.scale.x = hpScale;
+      view.healthFill.position.x = -0.43 * (1 - hpScale);
+    }
+
+    function addHighlight(x, z, material, lift = 0.028) {
+      const geometry = new THREE.PlaneGeometry(tileSize * 0.86, tileSize * 0.86);
+      const mesh = new THREE.Mesh(geometry, material);
+      const pos = worldPositionForTile(x, z, tileTopY(x, z) + lift);
+      mesh.position.copy(pos);
+      mesh.rotation.x = -Math.PI / 2;
+      mesh.renderOrder = 5;
+      highlightGroup.add(mesh);
+    }
+
+    function clearHighlights() {
+      while (highlightGroup.children.length) {
+        const child = highlightGroup.children.pop();
+        child.geometry.dispose();
+      }
+    }
+
+    function neighbors(x, z) {
+      return dirOrder
+        .map((dir) => ({ x: x + dirVectors[dir].x, z: z + dirVectors[dir].z, dir }))
+        .filter((tile) => insideBoard(tile.x, tile.z));
+    }
+
+    function canReachWithProfile(unit, tx, tz, profile) {
+      if (!insideBoard(tx, tz) || isBlocked(tx, tz)) {
+        return false;
+      }
+      const occupant = unitAt(tx, tz);
+      if (occupant && occupant.id !== unit.id) {
+        return false;
+      }
+      if (unit.x === tx && unit.z === tz) {
+        return true;
+      }
+
+      const startKey = tileKey(unit.x, unit.z);
+      const best = new Map([[startKey, 0]]);
+      const queue = [{ x: unit.x, z: unit.z, cost: 0 }];
+
+      while (queue.length) {
+        const current = queue.shift();
+        for (const next of neighbors(current.x, current.z)) {
+          if (isBlocked(next.x, next.z)) {
+            continue;
+          }
+          const nextUnit = unitAt(next.x, next.z);
+          if (nextUnit && nextUnit.id !== unit.id) {
+            continue;
+          }
+          const heightDelta = gridHeight(next.x, next.z) - gridHeight(current.x, current.z);
+          if (heightDelta > profile.climb || heightDelta < -3) {
+            continue;
+          }
+          const stepCost = 1 + Math.max(0, heightDelta);
+          const nextCost = current.cost + stepCost;
+          if (nextCost > profile.move) {
+            continue;
+          }
+          const key = tileKey(next.x, next.z);
+          if (best.has(key) && best.get(key) <= nextCost) {
+            continue;
+          }
+          if (next.x === tx && next.z === tz) {
+            return true;
+          }
+          best.set(key, nextCost);
+          queue.push({ x: next.x, z: next.z, cost: nextCost });
+        }
+      }
+
+      return false;
+    }
+
+    function movementPreview(unit, x, z) {
+      const dir = directionBetween(unit, { x, z });
+      const legClass = classFacing(unit, "legs", dir);
+      const profile = classInfo[legClass].legs;
+      return {
+        dir,
+        legClass,
+        profile,
+        valid: canReachWithProfile(unit, x, z, profile)
+      };
+    }
+
+    function reachableTiles(unit) {
+      const tiles = [];
+      for (let z = 0; z < boardDepth; z += 1) {
+        for (let x = 0; x < boardWidth; x += 1) {
+          if (x === unit.x && z === unit.z) {
+            continue;
+          }
+          const preview = movementPreview(unit, x, z);
+          if (preview.valid) {
+            tiles.push({ x, z, ...preview });
+          }
+        }
+      }
+      return tiles;
+    }
+
+    function lineCells(a, b) {
+      const cells = [];
+      let x0 = a.x;
+      let z0 = a.z;
+      const x1 = b.x;
+      const z1 = b.z;
+      const dx = Math.abs(x1 - x0);
+      const dz = Math.abs(z1 - z0);
+      const sx = x0 < x1 ? 1 : -1;
+      const sz = z0 < z1 ? 1 : -1;
+      let err = dx - dz;
+
+      while (!(x0 === x1 && z0 === z1)) {
+        const err2 = 2 * err;
+        if (err2 > -dz) {
+          err -= dz;
+          x0 += sx;
+        }
+        if (err2 < dx) {
+          err += dx;
+          z0 += sz;
+        }
+        if (!(x0 === x1 && z0 === z1)) {
+          cells.push({ x: x0, z: z0 });
+        }
+      }
+      return cells;
+    }
+
+    function hasLineOfSight(attacker, defender, profile) {
+      if (!profile.los) {
+        return true;
+      }
+      const startHeight = gridHeight(attacker.x, attacker.z);
+      const endHeight = gridHeight(defender.x, defender.z);
+      const highestEndpoint = Math.max(startHeight, endHeight);
+      for (const cell of lineCells(attacker, defender)) {
+        if (isBlocked(cell.x, cell.z)) {
+          if (!profile.arc) {
+            return false;
+          }
+          const obstacleKind = blockers.get(tileKey(cell.x, cell.z));
+          if (obstacleKind === "wall" || obstacleKind === "tower") {
+            return false;
+          }
+        }
+        if (!profile.arc && gridHeight(cell.x, cell.z) > highestEndpoint) {
+          return false;
+        }
+      }
+      return true;
+    }
+
+    function attackPreview(attacker, defender) {
+      const attackDir = directionBetween(attacker, defender);
+      const defendDir = directionBetween(defender, attacker);
+      const bodyClass = classFacing(attacker, "body", attackDir);
+      const headClass = classFacing(attacker, "head", attackDir);
+      const profile = classInfo[bodyClass].body;
+      const distance = gridDistance(attacker, defender);
+      const attackerHigh = gridHeight(attacker.x, attacker.z) > gridHeight(defender.x, defender.z);
+      const defenderHigh = gridHeight(defender.x, defender.z) > gridHeight(attacker.x, attacker.z);
+      const range = profile.range + classInfo[headClass].head.range + (attackerHigh && bodyClass === "Ranger" ? 1 : 0);
+      const los = hasLineOfSight(attacker, defender, profile);
+      const valid = distance <= range && los;
+      const defenderBody = classFacing(defender, "body", defendDir);
+      const defenderHead = classFacing(defender, "head", defendDir);
+      const defenderLegs = classFacing(defender, "legs", defendDir);
+      const attack = profile.damage + classInfo[headClass].head.attack + (attackerHigh ? 1 : 0);
+      const defense =
+        classInfo[defenderBody].defense +
+        classInfo[defenderHead].head.defense +
+        classInfo[defenderLegs].legs.defense +
+        (profile.range > 1 ? classInfo[defenderLegs].legs.dodge : 0) +
+        (defenderHigh ? 1 : 0) +
+        (defender.guard ? 2 : 0);
+      const damage = Math.max(1, attack - defense);
+
+      let reason = "";
+      if (distance > range) {
+        reason = `out of range (${distance} > ${range})`;
+      } else if (!los) {
+        reason = "line blocked";
+      } else {
+        reason = "clear";
+      }
+
+      return {
+        valid,
+        reason,
+        attackDir,
+        defendDir,
+        bodyClass,
+        headClass,
+        defenderBody,
+        defenderHead,
+        defenderLegs,
+        profile,
+        distance,
+        range,
+        los,
+        attack,
+        defense,
+        damage,
+        attackerHigh,
+        defenderHigh
+      };
+    }
+
+    function canMendSelf(unit) {
+      return classFacing(unit, "body", "S") === "Healer" && !state.actionUsed && unit.hp < unit.maxHp;
+    }
+
+    function setMode(mode) {
+      if (state.gameOver) {
+        return;
+      }
+      state.mode = mode;
+      refreshHighlights();
+      updateUI();
+    }
+
+    function refreshHighlights() {
+      clearHighlights();
+      const unit = activeUnit();
+      const enemy = otherUnit();
+      if (state.mode === "move" && !state.moveUsed) {
+        reachableTiles(unit).forEach((tile) => addHighlight(tile.x, tile.z, materials.move));
+      }
+      if (state.mode === "attack" && !state.actionUsed) {
+        const preview = attackPreview(unit, enemy);
+        addHighlight(enemy.x, enemy.z, preview.valid ? materials.attack : materials.invalid, 0.038);
+        if (classFacing(unit, "body", "S") === "Healer") {
+          addHighlight(unit.x, unit.z, materials.selfHeal, 0.046);
+        }
+      }
+      if (state.hover && insideBoard(state.hover.x, state.hover.z)) {
+        addHighlight(state.hover.x, state.hover.z, materials.hover, 0.052);
+      }
+    }
+
+    function addLog(text) {
+      state.log.unshift(text);
+      state.log = state.log.slice(0, 6);
+      updateUI();
+    }
+
+    function beginTurn() {
+      const unit = activeUnit();
+      unit.guard = false;
+      state.twists = 2;
+      state.moveUsed = false;
+      state.actionUsed = false;
+      state.mode = "inspect";
+
+      const southLegClass = classFacing(unit, "legs", "S");
+      if (southLegClass === "Healer" && unit.hp < unit.maxHp) {
+        unit.hp = Math.min(unit.maxHp, unit.hp + 1);
+        addLog(`${unit.name} opens with Healer legs and recovers 1 HP.`);
+      }
+
+      updateAllUnitViews(true);
+      refreshHighlights();
+      updateUI();
+    }
+
+    function endTurn() {
+      if (state.gameOver) {
+        return;
+      }
+      state.activeIndex = (state.activeIndex + 1) % state.units.length;
+      if (state.activeIndex === 0) {
+        state.round += 1;
+      }
+      beginTurn();
+    }
+
+    function rotateSection(section, delta) {
+      if (state.twists <= 0 || state.gameOver) {
+        return;
+      }
+      const unit = activeUnit();
+      unit.rotations[section] = (unit.rotations[section] + delta + 4) % 4;
+      state.twists -= 1;
+      updateUnitView(unit);
+      refreshHighlights();
+      updateUI();
+    }
+
+    function moveActiveUnit(x, z) {
+      const unit = activeUnit();
+      if (state.moveUsed || state.gameOver) {
+        return;
+      }
+      const preview = movementPreview(unit, x, z);
+      if (!preview.valid) {
+        dom.prompt.textContent = "That path does not fit the leg face aimed in that direction.";
+        return;
+      }
+      unit.x = x;
+      unit.z = z;
+      state.moveUsed = true;
+      state.mode = "inspect";
+      addLog(`${unit.name} moves ${preview.dir} with ${preview.legClass} legs.`);
+      updateAllUnitViews();
+      refreshHighlights();
+      updateUI();
+    }
+
+    function makeBeam(fromUnit, toUnit, color) {
+      const from = worldPositionForTile(fromUnit.x, fromUnit.z, tileTopY(fromUnit.x, fromUnit.z) + 0.9);
+      const to = worldPositionForTile(toUnit.x, toUnit.z, tileTopY(toUnit.x, toUnit.z) + 0.78);
+      const geometry = new THREE.BufferGeometry().setFromPoints([from, to]);
+      const material = new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.98 });
+      const line = new THREE.Line(geometry, material);
+      fxGroup.add(line);
+      temporaryFx.push({ object: line, ttl: 0.42, max: 0.42 });
+    }
+
+    function makeBurst(unit, color) {
+      const pos = worldPositionForTile(unit.x, unit.z, tileTopY(unit.x, unit.z) + 0.15);
+      const geometry = new THREE.TorusGeometry(0.45, 0.016, 8, 48);
+      const material = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.9 });
+      const burst = new THREE.Mesh(geometry, material);
+      burst.rotation.x = Math.PI / 2;
+      burst.position.copy(pos);
+      fxGroup.add(burst);
+      temporaryFx.push({ object: burst, ttl: 0.56, max: 0.56, expand: true });
+    }
+
+    function attackEnemy() {
+      if (state.actionUsed || state.gameOver) {
+        return;
+      }
+      const attacker = activeUnit();
+      const defender = otherUnit();
+      const preview = attackPreview(attacker, defender);
+      if (!preview.valid) {
+        dom.prompt.textContent = `Attack blocked: ${preview.reason}. Rotate the body side or climb for a better angle.`;
+        return;
+      }
+      defender.hp = Math.max(0, defender.hp - preview.damage);
+      defender.guard = false;
+      state.actionUsed = true;
+      state.mode = "inspect";
+      makeBeam(attacker, defender, colorForClass(preview.bodyClass));
+      makeBurst(defender, colorForClass(preview.bodyClass));
+      addLog(`${attacker.name} fires ${preview.bodyClass} ${preview.profile.name} ${preview.attackDir}: ${preview.damage} damage into ${preview.defenderBody}/${preview.defenderHead}/${preview.defenderLegs} defense.`);
+      if (defender.hp <= 0) {
+        state.gameOver = true;
+        dom.prompt.textContent = `${attacker.team} wins. Reset for another pitch pass.`;
+      }
+      updateAllUnitViews();
+      refreshHighlights();
+      updateUI();
+    }
+
+    function mendSelf() {
+      const unit = activeUnit();
+      if (!canMendSelf(unit) || state.gameOver) {
+        dom.prompt.textContent = "Mend needs the Healer body face on the south/front side and missing HP.";
+        return;
+      }
+      const headClass = classFacing(unit, "head", "S");
+      const amount = classInfo.Healer.body.heal + (headClass === "Healer" ? 1 : 0);
+      unit.hp = Math.min(unit.maxHp, unit.hp + amount);
+      state.actionUsed = true;
+      state.mode = "inspect";
+      makeBurst(unit, classInfo.Healer.color);
+      addLog(`${unit.name} mends with the front Healer body for ${amount} HP.`);
+      updateAllUnitViews();
+      refreshHighlights();
+      updateUI();
+    }
+
+    function guard() {
+      if (state.actionUsed || state.gameOver) {
+        return;
+      }
+      const unit = activeUnit();
+      unit.guard = true;
+      state.actionUsed = true;
+      state.mode = "inspect";
+      addLog(`${unit.name} braces. Incoming attacks add +2 guard defense.`);
+      refreshHighlights();
+      updateUI();
+    }
+
+    function resetGame() {
+      state.units = structuredClone(initialUnits);
+      state.activeIndex = 0;
+      state.round = 1;
+      state.twists = 2;
+      state.moveUsed = false;
+      state.actionUsed = false;
+      state.mode = "inspect";
+      state.hover = null;
+      state.gameOver = false;
+      state.log = ["Prototype reset. Rotate sections to build an angle."];
+      state.units.forEach((unit) => {
+        if (!unitViews.has(unit.id)) {
+          createUnit(unit);
+        }
+      });
+      updateAllUnitViews(true);
+      refreshHighlights();
+      updateUI();
+    }
+
+    function updateAllUnitViews(instant = false) {
+      state.units.forEach((unit) => updateUnitView(unit, instant));
+    }
+
+    function renderStatusStrip() {
+      dom.statusStrip.innerHTML = state.units
+        .map((unit) => {
+          const hp = Math.max(0, unit.hp);
+          const scale = Math.max(0, hp / unit.maxHp);
+          return `
+            <div class="unit-pill">
+              <b><span>${unit.team}</span><span>${hp}/${unit.maxHp}</span></b>
+              <div class="meter"><i style="transform: scaleX(${scale}); background: ${unit.color};"></i></div>
+            </div>
+          `;
+        })
+        .join("");
+    }
+
+    function renderHeroSummary(unit) {
+      const tileH = gridHeight(unit.x, unit.z);
+      dom.heroSummary.innerHTML = `
+        <div class="readout"><span>HP</span><b>${Math.max(0, unit.hp)} / ${unit.maxHp}</b></div>
+        <div class="readout"><span>Height</span><b>${tileH}</b></div>
+        <div class="readout"><span>Twists</span><b>${state.twists}</b></div>
+        <div class="readout"><span>Move</span><b>${state.moveUsed ? "Used" : "Ready"}</b></div>
+        <div class="readout"><span>Action</span><b>${state.actionUsed ? "Used" : "Ready"}</b></div>
+        <div class="readout"><span>Guard</span><b>${unit.guard ? "Braced" : "Open"}</b></div>
+      `;
+    }
+
+    function renderSections(unit) {
+      const enemy = otherUnit();
+      const attackDir = directionBetween(unit, enemy);
+      const defendDir = directionBetween(unit, enemy);
+
+      dom.sectionStack.innerHTML = sectionNames
+        .map((section) => {
+          const label = section === "body" ? "Body / Arms" : section[0].toUpperCase() + section.slice(1);
+          const map = sectionMap(unit, section);
+          const subtitle = section === "body" ? "attack side" : section === "legs" ? "move side" : "focus side";
+          return `
+            <div class="section-row">
+              <div class="section-title">
+                <div><b>${label}</b><small>${subtitle}</small></div>
+                <button type="button" title="Rotate section left" data-rotate="${section}" data-delta="-1"${state.twists <= 0 ? " disabled" : ""}>&lt;</button>
+                <button type="button" title="Rotate section right" data-rotate="${section}" data-delta="1"${state.twists <= 0 ? " disabled" : ""}>&gt;</button>
+              </div>
+              <div class="face-grid">
+                ${dirOrder
+                  .map((dir) => {
+                    const className = map[dir];
+                    const aim = section === "body" && dir === attackDir ? " aim" : "";
+                    const defend = dir === defendDir && section !== "body" ? " defend" : "";
+                    return `
+                      <div class="face-chip${aim}${defend}">
+                        <span>${dir}</span>
+                        <b style="color:${colorForClass(className)}">${className}</b>
+                      </div>
+                    `;
+                  })
+                  .join("")}
+              </div>
+            </div>
+          `;
+        })
+        .join("");
+
+      dom.sectionStack.querySelectorAll("[data-rotate]").forEach((button) => {
+        button.addEventListener("click", () => {
+          rotateSection(button.dataset.rotate, Number(button.dataset.delta));
+        });
+      });
+    }
+
+    function renderPreview(unit) {
+      const enemy = otherUnit();
+      const attack = attackPreview(unit, enemy);
+      const moveFace = classFacing(unit, "legs", directionBetween(unit, enemy));
+      const move = classInfo[moveFace].legs;
+      const attackColor = colorForClass(attack.bodyClass);
+      const result = attack.valid ? `${attack.damage} damage after defense` : `blocked: ${attack.reason}`;
+      dom.preview.innerHTML = `
+        <strong>Target Line</strong>
+        <p>${unit.name} aims ${attack.attackDir}; ${enemy.name} defends ${attack.defendDir}.</p>
+        <div class="preview-grid">
+          <div class="mini-readout"><b style="color:${attackColor}">${attack.bodyClass} body</b>${attack.profile.name}; distance ${attack.distance}, range ${attack.range}; ${result}</div>
+          <div class="mini-readout"><b>${attack.defenderBody} body</b>${attack.defenderHead} head, ${attack.defenderLegs} legs, defense ${attack.defense}</div>
+          <div class="mini-readout"><b style="color:${colorForClass(moveFace)}">${moveFace} legs</b>Move ${move.move}, climb ${move.climb}, ${move.note}</div>
+          <div class="mini-readout"><b>Terrain</b>${attack.attackerHigh ? "high attack" : attack.defenderHigh ? "high defense" : "level"}; ${attack.los ? "LOS clear" : "LOS blocked"}</div>
+        </div>
+      `;
+    }
+
+    function renderClassTable() {
+      dom.classTable.innerHTML = Object.entries(classInfo)
+        .map(([name, info]) => `
+          <div class="class-line">
+            <i class="swatch" style="background:${info.color}"></i>
+            <div><b style="color:${info.color}">${name}</b>: body ${info.body.name} range ${info.body.range}, damage ${info.body.damage}; legs move ${info.legs.move}; defense ${info.defense}.</div>
+          </div>
+        `)
+        .join("");
+    }
+
+    function updatePrompt(unit) {
+      if (state.gameOver) {
+        return;
+      }
+      if (state.mode === "move") {
+        dom.prompt.textContent = "Click a cyan tile. The destination direction chooses the leg face and movement stats.";
+      } else if (state.mode === "attack") {
+        const preview = attackPreview(unit, otherUnit());
+        dom.prompt.textContent = preview.valid
+          ? "Click the enemy cube to attack with the body face aimed at it."
+          : `Attack preview: ${preview.reason}. Rotate, move, or take height.`;
+      } else {
+        dom.prompt.textContent = "Rotate head, body, and legs independently. Body faces attack; incoming sides defend.";
+      }
+    }
+
+    function updateUI() {
+      const unit = activeUnit();
+      dom.turnChip.textContent = state.gameOver
+        ? "Battle complete"
+        : `Round ${state.round}: ${unit.team} turn. Twist sections, move, then attack or guard.`;
+      dom.activeName.textContent = unit.name;
+      dom.activeNote.textContent = `${unit.team} cube at ${unit.x}, ${unit.z}`;
+      renderStatusStrip();
+      renderHeroSummary(unit);
+      renderSections(unit);
+      renderPreview(unit);
+      renderClassTable();
+      updatePrompt(unit);
+      dom.log.innerHTML = state.log.map((line) => `<li>${line}</li>`).join("");
+      dom.moveButton.disabled = state.moveUsed || state.gameOver;
+      dom.attackButton.disabled = state.actionUsed || state.gameOver;
+      dom.mendButton.disabled = !canMendSelf(unit) || state.gameOver;
+      dom.guardButton.disabled = state.actionUsed || state.gameOver;
+      dom.endButton.disabled = state.gameOver;
+      dom.inspectButton.disabled = state.gameOver;
+    }
+
+    function findInteractive(object) {
+      let current = object;
+      while (current) {
+        if (current.userData && current.userData.kind) {
+          return current.userData;
+        }
+        current = current.parent;
+      }
+      return null;
+    }
+
+    function pointerToNdc(event) {
+      const rect = renderer.domElement.getBoundingClientRect();
+      pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+      pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+    }
+
+    function pick(event) {
+      pointerToNdc(event);
+      raycaster.setFromCamera(pointer, camera);
+      const hits = raycaster.intersectObjects(clickable, true);
+      for (const hit of hits) {
+        const data = findInteractive(hit.object);
+        if (data) {
+          return data;
+        }
+      }
+      return null;
+    }
+
+    function handleCanvasClick(event) {
+      if (state.gameOver) {
+        return;
+      }
+      const data = pick(event);
+      if (!data) {
+        return;
+      }
+
+      if (data.kind === "unit") {
+        const unit = state.units.find((candidate) => candidate.id === data.unitId);
+        if (!unit) {
+          return;
+        }
+        if (state.mode === "attack" && unit.id !== activeUnit().id) {
+          attackEnemy();
+        } else if (state.mode === "attack" && unit.id === activeUnit().id) {
+          mendSelf();
+        }
+        return;
+      }
+
+      if (data.kind === "tile" && state.mode === "move") {
+        moveActiveUnit(data.x, data.z);
+      }
+    }
+
+    function handlePointerMove(event) {
+      const data = pick(event);
+      const nextHover = data && data.kind === "tile" ? { x: data.x, z: data.z } : null;
+      if (
+        (!state.hover && nextHover) ||
+        (state.hover && !nextHover) ||
+        (state.hover && nextHover && (state.hover.x !== nextHover.x || state.hover.z !== nextHover.z))
+      ) {
+        state.hover = nextHover;
+        refreshHighlights();
+      }
+    }
+
+    function resize() {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    }
+
+    dom.moveButton.addEventListener("click", () => setMode("move"));
+    dom.attackButton.addEventListener("click", () => setMode("attack"));
+    dom.mendButton.addEventListener("click", mendSelf);
+    dom.guardButton.addEventListener("click", guard);
+    dom.endButton.addEventListener("click", endTurn);
+    dom.inspectButton.addEventListener("click", () => setMode("inspect"));
+    dom.resetButton.addEventListener("click", resetGame);
+    dom.panelToggle.addEventListener("click", () => {
+      dom.commandPanel.classList.toggle("open");
+    });
+    renderer.domElement.addEventListener("click", handleCanvasClick);
+    renderer.domElement.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("resize", resize);
+
+    function animateFx(delta) {
+      for (let index = temporaryFx.length - 1; index >= 0; index -= 1) {
+        const fx = temporaryFx[index];
+        fx.ttl -= delta;
+        const progress = Math.max(0, fx.ttl / fx.max);
+        if (fx.object.material) {
+          fx.object.material.opacity = progress;
+        }
+        if (fx.expand) {
+          const scale = 1 + (1 - progress) * 1.2;
+          fx.object.scale.setScalar(scale);
+        }
+        if (fx.ttl <= 0) {
+          fxGroup.remove(fx.object);
+          fx.object.geometry.dispose();
+          if (fx.object.material) {
+            fx.object.material.dispose();
+          }
+          temporaryFx.splice(index, 1);
+        }
+      }
+    }
+
+    let lastTime = performance.now();
+    function loop(now) {
+      const delta = Math.min(0.05, (now - lastTime) / 1000);
+      lastTime = now;
+      controls.update();
+      animateFx(delta);
+      state.units.forEach((unit) => {
+        const view = unitViews.get(unit.id);
+        if (!view) {
+          return;
+        }
+        view.group.position.lerp(view.target, 0.18);
+        view.healthBar.quaternion.copy(camera.quaternion);
+      });
+      renderer.render(scene, camera);
+    }
+
+    addTerrain();
+    state.units.forEach(createUnit);
+    state.log = ["Prototype loaded. Line up cube faces before you commit."];
+    beginTurn();
+    renderer.setAnimationLoop(loop);
+  </script>
+</body>
+</html>
