@@ -68,6 +68,7 @@ type ClickHandler = (coord: TileCoord) => void;
 type SetLevelOptions = {
   frame?: boolean;
 };
+const topUvRotations = [Math.PI / 2, -Math.PI / 2, Math.PI] as const;
 
 export class LevelScene {
   private readonly renderer: THREE.WebGLRenderer;
@@ -441,7 +442,7 @@ export class LevelScene {
           terrainMaterials.side,
           terrainMaterials.side
         ];
-        const mesh = new THREE.Mesh(new THREE.BoxGeometry(tileSize * 0.96, height, tileSize * 0.96), materials);
+        const mesh = new THREE.Mesh(this.createTerrainGeometry(tileSize * 0.96, height, tileSize * 0.96, tile.terrain, x, z), materials);
         mesh.position.copy(this.worldPosition(level, x, z, height / 2));
         mesh.castShadow = true;
         mesh.receiveShadow = true;
@@ -450,6 +451,50 @@ export class LevelScene {
         this.clickable.push(mesh);
       }
     }
+  }
+
+  private createTerrainGeometry(width: number, height: number, depth: number, materialId: string, x: number, z: number): THREE.BoxGeometry {
+    const geometry = new THREE.BoxGeometry(width, height, depth);
+    this.rotateTopFaceUvs(geometry, this.topUvRotationForTile(materialId, x, z));
+    return geometry;
+  }
+
+  private topUvRotationForTile(materialId: string, x: number, z: number): number {
+    return topUvRotations[this.hashTile(materialId, x, z) % topUvRotations.length];
+  }
+
+  private hashTile(materialId: string, x: number, z: number): number {
+    const key = `${materialId}:${x}:${z}`;
+    let hash = 2166136261;
+    for (let index = 0; index < key.length; index += 1) {
+      hash ^= key.charCodeAt(index);
+      hash = Math.imul(hash, 16777619);
+    }
+    return hash >>> 0;
+  }
+
+  private rotateTopFaceUvs(geometry: THREE.BufferGeometry, rotation: number): void {
+    const uv = geometry.getAttribute("uv") as THREE.BufferAttribute | undefined;
+    const topGroup = geometry.groups.find((group) => group.materialIndex === 2);
+    if (!uv || !topGroup) {
+      return;
+    }
+
+    const vertexIndices = new Set<number>();
+    const index = geometry.getIndex();
+    for (let offset = topGroup.start; offset < topGroup.start + topGroup.count; offset += 1) {
+      vertexIndices.add(index ? index.getX(offset) : offset);
+    }
+
+    const center = 0.5;
+    const cos = Math.cos(rotation);
+    const sin = Math.sin(rotation);
+    for (const vertexIndex of vertexIndices) {
+      const u = uv.getX(vertexIndex) - center;
+      const v = uv.getY(vertexIndex) - center;
+      uv.setXY(vertexIndex, u * cos - v * sin + center, u * sin + v * cos + center);
+    }
+    uv.needsUpdate = true;
   }
 
   private addObstacle(level: LevelData, obstacle: ObstacleData): void {
