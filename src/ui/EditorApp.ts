@@ -1,4 +1,4 @@
-import { classNames, defaultCampaign, defaultLevels, unitTemplates } from "../game/content";
+import { defaultCampaign, defaultClassDefinitions, defaultLevels, unitTemplates } from "../game/content";
 import {
   changeHeight,
   cloneLevel,
@@ -11,11 +11,33 @@ import {
   saveLevel,
   validateLevel
 } from "../game/levelOps";
-import type { CampaignData, ClassName, EditorTool, LevelData, ObstacleType, SectionName, Team, TerrainType, TileCoord, UnitTemplate } from "../game/schema";
+import type {
+  CampaignData,
+  ClassDefinition,
+  ClassId,
+  ClassSectionStats,
+  EditorTool,
+  LevelData,
+  ObstacleType,
+  SectionName,
+  Team,
+  TerrainType,
+  TileCoord,
+  UnitTemplate
+} from "../game/schema";
 import { LevelScene } from "../render/LevelScene";
 
 const directionLabels = ["S", "E", "N", "W"] as const;
 const sectionNames: SectionName[] = ["head", "body", "legs"];
+const statFields: Array<{ key: keyof ClassSectionStats; label: string }> = [
+  { key: "attack", label: "ATK" },
+  { key: "defense", label: "DEF" },
+  { key: "move", label: "MOVE" },
+  { key: "range", label: "RNG" },
+  { key: "support", label: "SUP" }
+];
+const templatesStorageKey = "craft-heroes-unit-templates";
+const classesStorageKey = "craft-heroes-class-definitions";
 
 function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (character) => {
@@ -39,6 +61,95 @@ function templateIdFromName(name: string): string {
   return slug || `build-${Date.now()}`;
 }
 
+function classIdFromName(name: string): string {
+  const slug = name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return slug || `class-${Date.now()}`;
+}
+
+function readStoredJson<T>(key: string): T | undefined {
+  try {
+    const value = localStorage.getItem(key);
+    return value ? (JSON.parse(value) as T) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function numberOrFallback(value: unknown, fallback: number): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function normalizeStats(stats: Partial<ClassSectionStats> | undefined): ClassSectionStats {
+  return {
+    attack: Math.max(0, Math.min(12, numberOrFallback(stats?.attack, 0))),
+    defense: Math.max(0, Math.min(12, numberOrFallback(stats?.defense, 0))),
+    move: Math.max(0, Math.min(12, numberOrFallback(stats?.move, 0))),
+    range: Math.max(0, Math.min(12, numberOrFallback(stats?.range, 0))),
+    support: Math.max(0, Math.min(12, numberOrFallback(stats?.support, 0)))
+  };
+}
+
+function normalizeClassDefinition(classDefinition: ClassDefinition): ClassDefinition {
+  const fallback = defaultClassDefinitions[0];
+  const id = classDefinition.id || classIdFromName(classDefinition.name || "class");
+  const sections = {} as ClassDefinition["sections"];
+  for (const section of sectionNames) {
+    const sourceSection = classDefinition.sections?.[section] ?? fallback.sections[section];
+    sections[section] = {
+      imageUrl: typeof sourceSection.imageUrl === "string" ? sourceSection.imageUrl : "",
+      stats: normalizeStats(sourceSection.stats),
+      conditions: Array.isArray(sourceSection.conditions) ? sourceSection.conditions.map(String).filter(Boolean) : []
+    };
+  }
+  return {
+    id,
+    name: classDefinition.name || id,
+    color: classDefinition.color || fallback.color,
+    sections
+  };
+}
+
+function mergeClassDefinitions(...sets: ClassDefinition[][]): ClassDefinition[] {
+  const byId = new Map<string, ClassDefinition>();
+  for (const set of sets) {
+    for (const classDefinition of set) {
+      const normalized = normalizeClassDefinition(classDefinition);
+      byId.set(normalized.id, normalized);
+    }
+  }
+  return [...byId.values()];
+}
+
+function initialClassDefinitions(): ClassDefinition[] {
+  const stored = readStoredJson<ClassDefinition[]>(classesStorageKey);
+  return Array.isArray(stored) && stored.length > 0
+    ? mergeClassDefinitions(defaultClassDefinitions, stored)
+    : defaultClassDefinitions.map((classDefinition) => structuredClone(classDefinition));
+}
+
+function initialTemplates(): UnitTemplate[] {
+  const stored = readStoredJson<UnitTemplate[]>(templatesStorageKey);
+  return Array.isArray(stored) && stored.length > 0
+    ? stored.map((template) => structuredClone(template))
+    : unitTemplates.map((template) => structuredClone(template));
+}
+
+function conditionsToText(conditions: string[]): string {
+  return conditions.join("; ");
+}
+
+function textToConditions(value: string): string[] {
+  return value
+    .split(/[,;\n]+/)
+    .map((condition) => condition.trim())
+    .filter(Boolean);
+}
+
 interface EditorState {
   mode: "editor" | "play";
   tool: EditorTool;
@@ -46,6 +157,7 @@ interface EditorState {
   obstacle: ObstacleType;
   team: Team;
   templateId: string;
+  classId: ClassId;
   levelId: string;
   selected?: TileCoord;
 }
@@ -57,14 +169,16 @@ export class EditorApp {
   private readonly panel: HTMLElement;
   private levels: LevelData[] = defaultLevels.map(cloneLevel);
   private campaign: CampaignData = structuredClone(defaultCampaign);
-  private templates: UnitTemplate[] = unitTemplates.map((template) => structuredClone(template));
+  private templates: UnitTemplate[] = initialTemplates();
+  private classDefinitions: ClassDefinition[] = initialClassDefinitions();
   private state: EditorState = {
     mode: "editor",
     tool: "select",
     terrain: "grass",
     obstacle: "wall",
     team: "enemy",
-    templateId: unitTemplates[1].id,
+    templateId: this.templates[1]?.id ?? this.templates[0].id,
+    classId: this.classDefinitions[0].id,
     levelId: defaultCampaign.startLevel
   };
 
@@ -78,7 +192,7 @@ export class EditorApp {
     `;
     this.canvas = this.root.querySelector(".world-canvas") as HTMLCanvasElement;
     this.panel = this.root.querySelector(".editor-panel") as HTMLElement;
-    this.scene = new LevelScene(this.canvas);
+    this.scene = new LevelScene(this.canvas, this.classDefinitions);
     this.scene.onTileClick((coord) => this.handleTileClick(coord));
     this.render(true);
   }
@@ -95,6 +209,10 @@ export class EditorApp {
     return this.templates.find((template) => template.id === this.state.templateId) ?? this.templates[0];
   }
 
+  private selectedClass(): ClassDefinition {
+    return this.classDefinitions.find((classDefinition) => classDefinition.id === this.state.classId) ?? this.classDefinitions[0];
+  }
+
   private uniqueTemplateId(name: string): string {
     const baseId = templateIdFromName(name);
     let id = baseId;
@@ -106,6 +224,26 @@ export class EditorApp {
     return id;
   }
 
+  private uniqueClassId(name: string): string {
+    const baseId = classIdFromName(name);
+    let id = baseId;
+    let index = 2;
+    while (this.classDefinitions.some((classDefinition) => classDefinition.id === id)) {
+      id = `${baseId}-${index}`;
+      index += 1;
+    }
+    return id;
+  }
+
+  private classOptions(selectedId: ClassId): string {
+    return this.classDefinitions
+      .map(
+        (classDefinition) =>
+          `<option value="${escapeHtml(classDefinition.id)}" ${classDefinition.id === selectedId ? "selected" : ""}>${escapeHtml(classDefinition.name)}</option>`
+      )
+      .join("");
+  }
+
   private readBuildDraft(templateId = this.state.templateId): UnitTemplate {
     const fallback = this.selectedTemplate();
     const nameInput = this.panel.querySelector<HTMLInputElement>("[data-build='name']");
@@ -114,7 +252,7 @@ export class EditorApp {
     for (const section of sectionNames) {
       for (let index = 0; index < directionLabels.length; index += 1) {
         const select = this.panel.querySelector<HTMLSelectElement>(`[data-face-section='${section}'][data-face-index='${index}']`);
-        faces[section][index] = (select?.value as ClassName | undefined) ?? faces[section][index];
+        faces[section][index] = select?.value ?? faces[section][index];
       }
     }
     return {
@@ -123,6 +261,33 @@ export class EditorApp {
       hp: Math.max(1, Math.min(99, Number(hpInput?.value || fallback.hp))),
       faces
     };
+  }
+
+  private readClassDraft(classId = this.state.classId): ClassDefinition {
+    const fallback = this.selectedClass();
+    const nameInput = this.panel.querySelector<HTMLInputElement>("[data-class='name']");
+    const colorInput = this.panel.querySelector<HTMLInputElement>("[data-class='color']");
+    const sections = structuredClone(fallback.sections);
+    for (const section of sectionNames) {
+      for (const stat of statFields) {
+        const input = this.panel.querySelector<HTMLInputElement>(`[data-class-section='${section}'][data-stat='${stat.key}']`);
+        const value = numberOrFallback(input?.value, sections[section].stats[stat.key]);
+        sections[section].stats[stat.key] = Math.max(0, Math.min(12, value));
+      }
+      const conditionsInput = this.panel.querySelector<HTMLInputElement>(`[data-class-section='${section}'][data-condition]`);
+      sections[section].conditions = textToConditions(conditionsInput?.value ?? conditionsToText(sections[section].conditions));
+    }
+    return normalizeClassDefinition({
+      id: classId,
+      name: nameInput?.value.trim() || fallback.name,
+      color: colorInput?.value || fallback.color,
+      sections
+    });
+  }
+
+  private replaceClassDefinition(nextClass: ClassDefinition): void {
+    this.classDefinitions = this.classDefinitions.map((classDefinition) => (classDefinition.id === nextClass.id ? nextClass : classDefinition));
+    this.scene.setClassDefinitions(this.classDefinitions);
   }
 
   private applyLevelSize(): void {
@@ -181,7 +346,8 @@ export class EditorApp {
     const level = this.currentLevel();
     const warnings = validateLevel(level);
     const currentTemplate = this.selectedTemplate();
-    const json = JSON.stringify({ campaign: this.campaign, level, templates: this.templates }, null, 2);
+    const currentClass = this.selectedClass();
+    const json = JSON.stringify({ campaign: this.campaign, level, templates: this.templates, classes: this.classDefinitions }, null, 2);
     this.panel.innerHTML = `
       <div class="panel-head">
         <div>
@@ -258,6 +424,68 @@ export class EditorApp {
 
       <section class="control-section">
         <div class="section-title">
+          <strong>Class Library</strong>
+          <span>${this.classDefinitions.length} classes available.</span>
+        </div>
+        <label class="field">
+          <span>Class</span>
+          <select data-field="classId">
+            ${this.classOptions(this.state.classId)}
+          </select>
+        </label>
+        <div class="compact-grid">
+          <label class="field">
+            <span>Class Name</span>
+            <input data-class="name" type="text" value="${escapeHtml(currentClass.name)}">
+          </label>
+          <label class="field">
+            <span>Color</span>
+            <input data-class="color" type="color" value="${escapeHtml(currentClass.color)}">
+          </label>
+        </div>
+        <div class="class-section-list">
+          ${sectionNames
+            .map((section) => {
+              const sectionDefinition = currentClass.sections[section];
+              return `
+                <div class="class-section-card">
+                  <div class="class-section-head">
+                    <strong>${section === "body" ? "body / arms" : section}</strong>
+                    <img src="${escapeHtml(sectionDefinition.imageUrl)}" alt="">
+                  </div>
+                  <label class="field">
+                    <span>Image</span>
+                    <input data-class-image data-class-section="${section}" type="file" accept="image/*">
+                  </label>
+                  <div class="stat-grid">
+                    ${statFields
+                      .map(
+                        (stat) => `
+                          <label>
+                            <span>${stat.label}</span>
+                            <input data-class-section="${section}" data-stat="${stat.key}" type="number" min="0" max="12" step="1" value="${sectionDefinition.stats[stat.key]}">
+                          </label>
+                        `
+                      )
+                      .join("")}
+                  </div>
+                  <label class="field">
+                    <span>Conditions</span>
+                    <input data-class-section="${section}" data-condition type="text" value="${escapeHtml(conditionsToText(sectionDefinition.conditions))}">
+                  </label>
+                </div>
+              `;
+            })
+            .join("")}
+        </div>
+        <div class="button-row two">
+          <button data-action="update-class">Update Class</button>
+          <button data-action="save-class-new">Save As New Class</button>
+        </div>
+      </section>
+
+      <section class="control-section">
+        <div class="section-title">
           <strong>Character Builds</strong>
           <span>Create reusable player or enemy cube layouts.</span>
         </div>
@@ -283,12 +511,7 @@ export class EditorApp {
                         <label>
                           <span>${direction}</span>
                           <select data-face-section="${section}" data-face-index="${index}">
-                            ${classNames
-                              .map(
-                                (className) =>
-                                  `<option value="${className}" ${currentTemplate.faces[section][index] === className ? "selected" : ""}>${className}</option>`
-                              )
-                              .join("")}
+                            ${this.classOptions(currentTemplate.faces[section][index])}
                           </select>
                         </label>
                       `
@@ -349,8 +572,16 @@ export class EditorApp {
           this.render(true);
           return;
         }
+        if (key === "classId" || key === "templateId") {
+          this.updatePanel();
+          return;
+        }
         this.render();
       });
+    });
+
+    this.panel.querySelectorAll<HTMLInputElement>("[data-class-image]").forEach((input) => {
+      input.addEventListener("change", () => this.handleClassImageUpload(input));
     });
 
     this.panel.querySelectorAll<HTMLButtonElement>("[data-action]").forEach((button) => {
@@ -363,6 +594,31 @@ export class EditorApp {
         ? `${this.state.mode.toUpperCase()} / ${this.state.tool} / tile ${this.state.selected.x}, ${this.state.selected.z}`
         : `${this.state.mode.toUpperCase()} / ${this.state.tool} / click a tile`;
     }
+  }
+
+  private handleClassImageUpload(input: HTMLInputElement): void {
+    const file = input.files?.[0];
+    const section = input.dataset.classSection as SectionName | undefined;
+    if (!file || !section || !sectionNames.includes(section)) {
+      return;
+    }
+    if (!file.type.startsWith("image/")) {
+      this.flash("Class image upload needs an image file.");
+      return;
+    }
+    const reader = new FileReader();
+    reader.addEventListener("load", () => {
+      const dataUrl = String(reader.result ?? "");
+      const draft = this.readClassDraft();
+      draft.sections[section].imageUrl = dataUrl;
+      this.replaceClassDefinition(draft);
+      this.updatePanel();
+      this.flash(`Updated ${draft.name} ${section} art.`);
+    });
+    reader.addEventListener("error", () => {
+      this.flash("Class image upload failed.");
+    });
+    reader.readAsDataURL(file);
   }
 
   private handleAction(action: string): void {
@@ -390,6 +646,22 @@ export class EditorApp {
       this.state.templateId = nextTemplate.id;
       this.updatePanel();
       this.flash(`Created ${nextTemplate.name}.`);
+    } else if (action === "update-class") {
+      const draft = this.readClassDraft();
+      this.replaceClassDefinition(draft);
+      this.updatePanel();
+      this.flash(`Updated ${draft.name}.`);
+    } else if (action === "save-class-new") {
+      const draft = this.readClassDraft();
+      const nextClass = {
+        ...draft,
+        id: this.uniqueClassId(draft.name)
+      };
+      this.classDefinitions.push(nextClass);
+      this.state.classId = nextClass.id;
+      this.scene.setClassDefinitions(this.classDefinitions);
+      this.updatePanel();
+      this.flash(`Created ${nextClass.name}.`);
     } else if (action === "duplicate-level") {
       const source = this.currentLevel();
       const copy = cloneLevel(source);
@@ -404,15 +676,19 @@ export class EditorApp {
     } else if (action === "save-local") {
       saveLevel(this.currentLevel());
       saveCampaign(this.campaign);
-      localStorage.setItem("craft-heroes-unit-templates", JSON.stringify(this.templates, null, 2));
-      this.flash("Saved campaign and level to browser storage.");
+      localStorage.setItem(templatesStorageKey, JSON.stringify(this.templates, null, 2));
+      localStorage.setItem(classesStorageKey, JSON.stringify(this.classDefinitions, null, 2));
+      this.flash("Saved campaign, level, builds, and classes to browser storage.");
     } else if (action === "load-sample") {
       this.levels = defaultLevels.map(cloneLevel);
       this.campaign = structuredClone(defaultCampaign);
       this.templates = unitTemplates.map((template) => structuredClone(template));
+      this.classDefinitions = defaultClassDefinitions.map((classDefinition) => structuredClone(classDefinition));
       this.state.levelId = this.campaign.startLevel;
       this.state.templateId = this.templates[1]?.id ?? this.templates[0].id;
+      this.state.classId = this.classDefinitions[0].id;
       this.state.selected = undefined;
+      this.scene.setClassDefinitions(this.classDefinitions);
       this.render(true);
     } else if (action === "copy-json") {
       const textarea = this.panel.querySelector<HTMLTextAreaElement>("[data-json]");
@@ -440,9 +716,23 @@ export class EditorApp {
       return;
     }
     try {
-      const parsed = JSON.parse(textarea.value) as { campaign?: CampaignData; level?: LevelData; templates?: UnitTemplate[] };
+      const parsed = JSON.parse(textarea.value) as {
+        campaign?: CampaignData;
+        level?: LevelData;
+        templates?: UnitTemplate[];
+        classes?: ClassDefinition[];
+        classDefinitions?: ClassDefinition[];
+      };
       if (parsed.campaign) {
         this.campaign = parsed.campaign;
+      }
+      const incomingClasses = parsed.classes ?? parsed.classDefinitions;
+      if (incomingClasses?.length) {
+        this.classDefinitions = mergeClassDefinitions(defaultClassDefinitions, incomingClasses);
+        if (!this.classDefinitions.some((classDefinition) => classDefinition.id === this.state.classId)) {
+          this.state.classId = this.classDefinitions[0].id;
+        }
+        this.scene.setClassDefinitions(this.classDefinitions);
       }
       if (parsed.templates?.length) {
         this.templates = parsed.templates;

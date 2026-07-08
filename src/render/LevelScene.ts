@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
-import type { ClassName, LevelData, ObstacleData, SectionName, TerrainType, TileCoord, UnitData } from "../game/schema";
+import type { ClassDefinition, ClassId, LevelData, ObstacleData, SectionName, TerrainType, TileCoord, UnitData } from "../game/schema";
 
 const tileSize = 1.08;
 const heightStep = 0.28;
@@ -13,13 +13,6 @@ const terrainColors: Record<TerrainType, string> = {
   stone: "#8f958d",
   sand: "#d0b66b",
   water: "#5198ba"
-};
-
-const classColors: Record<ClassName, string> = {
-  Warrior: "#e05c4f",
-  Healer: "#45d483",
-  Ranger: "#f2bd55",
-  Mage: "#9b79f2"
 };
 
 const sectionSpecs: Record<SectionName, { height: number; width: number }> = {
@@ -43,13 +36,18 @@ export class LevelScene {
   private readonly pointer = new THREE.Vector2();
   private readonly clickable: THREE.Object3D[] = [];
   private readonly textureLoader = new THREE.TextureLoader();
-  private readonly classMaterials: Record<SectionName, Record<ClassName, THREE.MeshStandardMaterial>>;
+  private classDefinitions: ClassDefinition[] = [];
+  private classMaterials: Record<SectionName, Record<ClassId, THREE.MeshStandardMaterial>> = {
+    head: {},
+    body: {},
+    legs: {}
+  };
   private level?: LevelData;
   private selected?: TileCoord;
   private mode: "editor" | "play" = "editor";
   private clickHandler?: ClickHandler;
 
-  constructor(private readonly canvas: HTMLCanvasElement) {
+  constructor(private readonly canvas: HTMLCanvasElement, classDefinitions: ClassDefinition[] = []) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: "high-performance" });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.shadowMap.enabled = true;
@@ -77,7 +75,7 @@ export class LevelScene {
     this.controls.maxDistance = 20;
     this.controls.maxPolarAngle = Math.PI * 0.44;
 
-    this.classMaterials = this.createClassMaterials();
+    this.setClassDefinitions(classDefinitions);
     this.canvas.addEventListener("click", (event) => this.pick(event));
     window.addEventListener("resize", () => this.resize());
     this.resize();
@@ -107,6 +105,16 @@ export class LevelScene {
     this.renderLevel();
   }
 
+  setClassDefinitions(classDefinitions: ClassDefinition[]): void {
+    const previousMaterials = this.collectClassMaterials();
+    this.classDefinitions = structuredClone(classDefinitions);
+    this.classMaterials = this.createClassMaterials(this.classDefinitions);
+    this.renderLevel();
+    for (const material of previousMaterials) {
+      this.disposeMaterial(material);
+    }
+  }
+
   frameCurrentLevel(): void {
     if (this.level) {
       this.frameCamera(this.level);
@@ -117,24 +125,56 @@ export class LevelScene {
     this.renderer.dispose();
   }
 
-  private createClassMaterials(): Record<SectionName, Record<ClassName, THREE.MeshStandardMaterial>> {
-    const materials = {} as Record<SectionName, Record<ClassName, THREE.MeshStandardMaterial>>;
+  private createClassMaterials(classDefinitions: ClassDefinition[]): Record<SectionName, Record<ClassId, THREE.MeshStandardMaterial>> {
+    const materials: Record<SectionName, Record<ClassId, THREE.MeshStandardMaterial>> = {
+      head: {},
+      body: {},
+      legs: {}
+    };
     for (const section of sectionNames) {
-      materials[section] = {} as Record<ClassName, THREE.MeshStandardMaterial>;
-      for (const className of Object.keys(classColors) as ClassName[]) {
-        const texture = this.textureLoader.load(`/assets/classes/${className.toLowerCase()}-${section}.png`);
-        texture.colorSpace = THREE.SRGBColorSpace;
-        texture.magFilter = THREE.NearestFilter;
-        texture.minFilter = THREE.NearestMipmapNearestFilter;
-        materials[section][className] = new THREE.MeshStandardMaterial({
-          color: "#ffffff",
-          map: texture,
-          roughness: 0.66,
-          metalness: 0.02
-        });
+      for (const classDefinition of classDefinitions) {
+        materials[section][classDefinition.id] = this.createSectionMaterial(classDefinition, section);
       }
     }
     return materials;
+  }
+
+  private createSectionMaterial(classDefinition: ClassDefinition, section: SectionName): THREE.MeshStandardMaterial {
+    const imageUrl = classDefinition.sections[section]?.imageUrl;
+    if (!imageUrl) {
+      return new THREE.MeshStandardMaterial({
+        color: classDefinition.color || "#f4f0db",
+        roughness: 0.66,
+        metalness: 0.02
+      });
+    }
+    const texture = this.textureLoader.load(imageUrl);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.magFilter = THREE.NearestFilter;
+    texture.minFilter = THREE.NearestFilter;
+    return new THREE.MeshStandardMaterial({
+      color: "#ffffff",
+      map: texture,
+      roughness: 0.66,
+      metalness: 0.02
+    });
+  }
+
+  private collectClassMaterials(): THREE.MeshStandardMaterial[] {
+    return sectionNames.flatMap((section) => Object.values(this.classMaterials[section]));
+  }
+
+  private materialFor(section: SectionName, classId: ClassId): THREE.MeshStandardMaterial {
+    const existing = this.classMaterials[section][classId];
+    if (existing) {
+      return existing;
+    }
+    const definition = this.classDefinitions.find((classDefinition) => classDefinition.id === classId);
+    const fallback = definition
+      ? this.createSectionMaterial(definition, section)
+      : new THREE.MeshStandardMaterial({ color: "#f4f0db", roughness: 0.72, metalness: 0.02 });
+    this.classMaterials[section][classId] = fallback;
+    return fallback;
   }
 
   private renderLevel(): void {
@@ -175,17 +215,23 @@ export class LevelScene {
       if (Array.isArray(material)) {
         for (const item of material) {
           if (!this.isSharedMaterial(item)) {
-            item.dispose();
+            this.disposeMaterial(item);
           }
         }
       } else if (material && !this.isSharedMaterial(material)) {
-        material.dispose();
+        this.disposeMaterial(material);
       }
     });
   }
 
   private isSharedMaterial(material: THREE.Material): boolean {
     return Object.values(this.classMaterials).some((section) => Object.values(section).includes(material as THREE.MeshStandardMaterial));
+  }
+
+  private disposeMaterial(material: THREE.Material): void {
+    const mappedMaterial = material as THREE.MeshStandardMaterial;
+    mappedMaterial.map?.dispose();
+    material.dispose();
   }
 
   private addTerrain(level: LevelData): void {
@@ -236,12 +282,12 @@ export class LevelScene {
       const spec = sectionSpecs[section];
       const faces = unit.faces[section];
       const mesh = new THREE.Mesh(new THREE.BoxGeometry(spec.width, spec.height, spec.width), [
-        this.classMaterials[section][faces[1]],
-        this.classMaterials[section][faces[3]],
+        this.materialFor(section, faces[1]),
+        this.materialFor(section, faces[3]),
         new THREE.MeshStandardMaterial({ color: "#f4f0db", roughness: 0.7 }),
         new THREE.MeshStandardMaterial({ color: "#2b3130", roughness: 0.8 }),
-        this.classMaterials[section][faces[0]],
-        this.classMaterials[section][faces[2]]
+        this.materialFor(section, faces[0]),
+        this.materialFor(section, faces[2])
       ]);
       mesh.position.y = y + spec.height / 2;
       mesh.rotation.y = unit.rotations[section] * Math.PI / 2;

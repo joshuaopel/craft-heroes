@@ -1,8 +1,30 @@
 export type TerrainType = "grass" | "stone" | "sand" | "water";
 export type ObstacleType = "wall" | "tower" | "tree" | "cover";
 export type Team = "player" | "enemy";
-export type ClassName = "Warrior" | "Healer" | "Ranger" | "Mage";
+export type ClassId = string;
+export type ClassName = ClassId;
 export type SectionName = "head" | "body" | "legs";
+
+export interface ClassSectionStats {
+  attack: number;
+  defense: number;
+  move: number;
+  range: number;
+  support: number;
+}
+
+export interface ClassSectionDefinition {
+  imageUrl: string;
+  stats: ClassSectionStats;
+  conditions: string[];
+}
+
+export interface ClassDefinition {
+  id: ClassId;
+  name: string;
+  color: string;
+  sections: Record<SectionName, ClassSectionDefinition>;
+}
 
 export interface TileData {
   height: number;
@@ -17,9 +39,9 @@ export interface ObstacleData {
 }
 
 export interface UnitFaceLayout {
-  head: ClassName[];
-  body: ClassName[];
-  legs: ClassName[];
+  head: ClassId[];
+  body: ClassId[];
+  legs: ClassId[];
 }
 
 export interface UnitData {
