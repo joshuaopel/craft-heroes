@@ -196,6 +196,8 @@ function normalizeEnvironment(environment: Partial<EnvironmentSettings> | undefi
     groundTextureUrl: environment?.groundTextureUrl || "",
     ambientIntensity: Math.max(0, Math.min(4, numberOrFallback(environment?.ambientIntensity, defaultEnvironmentSettings.ambientIntensity))),
     sunIntensity: Math.max(0, Math.min(6, numberOrFallback(environment?.sunIntensity, defaultEnvironmentSettings.sunIntensity))),
+    windStrength: Math.max(0, Math.min(3, numberOrFallback(environment?.windStrength, defaultEnvironmentSettings.windStrength))),
+    windSpeed: Math.max(0, Math.min(4, numberOrFallback(environment?.windSpeed, defaultEnvironmentSettings.windSpeed))),
     backgroundModel: {
       modelUrl: typeof background?.modelUrl === "string" ? background.modelUrl : "",
       modelFileName: typeof background?.modelFileName === "string" ? background.modelFileName : "",
@@ -634,6 +636,8 @@ export class EditorApp {
     const groundInput = this.panel.querySelector<HTMLInputElement>("[data-environment='groundColor']");
     const ambientInput = this.panel.querySelector<HTMLInputElement>("[data-environment='ambientIntensity']");
     const sunInput = this.panel.querySelector<HTMLInputElement>("[data-environment='sunIntensity']");
+    const windStrengthInput = this.panel.querySelector<HTMLInputElement>("[data-environment='windStrength']");
+    const windSpeedInput = this.panel.querySelector<HTMLInputElement>("[data-environment='windSpeed']");
     const backgroundScaleInput = this.panel.querySelector<HTMLInputElement>("[data-background='scale']");
     const backgroundRotationInput = this.panel.querySelector<HTMLInputElement>("[data-background='rotation']");
     const backgroundOffsetInput = this.panel.querySelector<HTMLInputElement>("[data-background='offsetY']");
@@ -645,6 +649,8 @@ export class EditorApp {
       groundColor: groundInput?.value || level.environment.groundColor,
       ambientIntensity: numberOrFallback(ambientInput?.value, level.environment.ambientIntensity),
       sunIntensity: numberOrFallback(sunInput?.value, level.environment.sunIntensity),
+      windStrength: numberOrFallback(windStrengthInput?.value, level.environment.windStrength),
+      windSpeed: numberOrFallback(windSpeedInput?.value, level.environment.windSpeed),
       backgroundModel: {
         ...level.environment.backgroundModel,
         fitToMap: backgroundFitInput?.checked ?? level.environment.backgroundModel.fitToMap,
@@ -905,6 +911,14 @@ export class EditorApp {
           <label class="field">
             <span>Sun</span>
             <input data-environment="sunIntensity" type="number" min="0" max="6" step="0.1" value="${level.environment.sunIntensity}">
+          </label>
+          <label class="field">
+            <span>Wind Strength</span>
+            <input data-environment="windStrength" type="number" min="0" max="3" step="0.05" value="${level.environment.windStrength}">
+          </label>
+          <label class="field">
+            <span>Wind Speed</span>
+            <input data-environment="windSpeed" type="number" min="0" max="4" step="0.05" value="${level.environment.windSpeed}">
           </label>
         </div>
         <div class="button-row two">

@@ -85,6 +85,8 @@ export interface EnvironmentSettings {
   groundTextureUrl: string;
   ambientIntensity: number;
   sunIntensity: number;
+  windStrength: number;
+  windSpeed: number;
   backgroundModel: BackgroundModelSettings;
 }
 

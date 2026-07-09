@@ -118,6 +118,8 @@ export const defaultEnvironmentSettings: EnvironmentSettings = {
   groundTextureUrl: "",
   ambientIntensity: 1.2,
   sunIntensity: 2,
+  windStrength: 0.8,
+  windSpeed: 1,
   backgroundModel: {
     modelUrl: "",
     modelFileName: "",

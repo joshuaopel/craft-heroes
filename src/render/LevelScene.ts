@@ -23,6 +23,7 @@ const baseTileHeight = 0.18;
 const maxGrassVoxels = 2200;
 const sectionNames: SectionName[] = ["head", "body", "legs"];
 const dirOrder = ["S", "E", "N", "W"];
+const glbLightMarkerTokens = new Set(["chlight", "light", "lightpoint", "emit", "emitter", "emissive", "ember", "flame", "glow"]);
 
 const sectionSpecs: Record<SectionName, { height: number; width: number }> = {
   legs: { height: 0.54, width: 0.62 },
@@ -37,6 +38,8 @@ const fallbackEnvironment: EnvironmentSettings = {
   groundTextureUrl: "",
   ambientIntensity: 1.2,
   sunIntensity: 2,
+  windStrength: 0.8,
+  windSpeed: 1,
   backgroundModel: {
     modelUrl: "",
     modelFileName: "",
@@ -141,6 +144,8 @@ export class LevelScene {
   private selected?: TileCoord;
   private mode: "editor" | "play" = "editor";
   private clickHandler?: ClickHandler;
+  private environmentWindStrength = fallbackEnvironment.windStrength;
+  private environmentWindSpeed = fallbackEnvironment.windSpeed;
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
@@ -551,6 +556,8 @@ export class LevelScene {
     this.hemiLight.intensity = resolved.ambientIntensity;
     this.sunLight.intensity = resolved.sunIntensity;
     this.fillLight.intensity = resolved.sunIntensity * 0.32;
+    this.environmentWindStrength = Math.max(0, Math.min(3, resolved.windStrength ?? fallbackEnvironment.windStrength));
+    this.environmentWindSpeed = Math.max(0, Math.min(4, resolved.windSpeed ?? fallbackEnvironment.windSpeed));
   }
 
   private createGroundMaterial(environment: EnvironmentSettings | undefined): THREE.MeshStandardMaterial {
@@ -784,11 +791,7 @@ export class LevelScene {
     const geometry = new THREE.BoxGeometry(1, 1, 1);
     const colorBase = Array.from({ length: geometry.getAttribute("position").count * 3 }, () => 1);
     geometry.setAttribute("color", new THREE.Float32BufferAttribute(colorBase, 3));
-    const material = new THREE.MeshBasicMaterial({
-      color: "#ffffff",
-      toneMapped: false,
-      vertexColors: true
-    });
+    const material = this.createSwayGrassMaterial();
     const mesh = new THREE.InstancedMesh(geometry, material, matrices.length);
     for (let index = 0; index < matrices.length; index += 1) {
       mesh.setMatrixAt(index, matrices[index]);
@@ -799,6 +802,44 @@ export class LevelScene {
       mesh.instanceColor.needsUpdate = true;
     }
     this.root.add(mesh);
+  }
+
+  private createSwayGrassMaterial(): THREE.ShaderMaterial {
+    const material = new THREE.ShaderMaterial({
+      uniforms: {
+        uTime: { value: 0 },
+        uStrength: { value: 0.045 * this.environmentWindStrength },
+        uSpeed: { value: 1.15 * this.environmentWindSpeed }
+      },
+      vertexShader: `
+        uniform float uTime;
+        uniform float uStrength;
+        uniform float uSpeed;
+        varying vec3 vColor;
+
+        void main() {
+          vec4 origin = instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
+          float phase = origin.x * 2.17 + origin.z * 1.43;
+          float anchor = clamp(position.y + 0.5, 0.0, 1.0);
+          float wave = sin(uTime * uSpeed + phase) * uStrength * anchor;
+          vec3 transformed = position;
+          transformed.x += wave;
+          transformed.z += cos(uTime * uSpeed * 0.72 + phase * 1.37) * uStrength * 0.42 * anchor;
+          vColor = instanceColor;
+          gl_Position = projectionMatrix * modelViewMatrix * instanceMatrix * vec4(transformed, 1.0);
+        }
+      `,
+      fragmentShader: `
+        varying vec3 vColor;
+
+        void main() {
+          gl_FragColor = vec4(vColor, 1.0);
+        }
+      `,
+      toneMapped: false
+    });
+    this.windMaterials.add(material);
+    return material;
   }
 
   private pushTriangleBlade(
@@ -870,8 +911,8 @@ export class LevelScene {
     const material = new THREE.ShaderMaterial({
       uniforms: {
         uTime: { value: 0 },
-        uStrength: { value: kind === "grass" ? 0.035 : 0.025 },
-        uSpeed: { value: kind === "grass" ? 1.2 : 0.55 },
+        uStrength: { value: (kind === "grass" ? 0.035 : 0.025) * this.environmentWindStrength },
+        uSpeed: { value: (kind === "grass" ? 1.2 : 0.55) * this.environmentWindSpeed },
         uOpacity: { value: kind === "grass" ? 1 : 0.74 }
       },
       vertexShader: `
@@ -1029,7 +1070,10 @@ export class LevelScene {
     proxy.userData = { propId: definition.id, height, clickProxy: includeClickProxy };
     group.add(proxy);
 
-    this.addPropLight(group, definition, resolvedScale, height);
+    const usesModelLightMarkers = definition.assetKind === "glb" && Boolean(definition.modelUrl);
+    if (!usesModelLightMarkers) {
+      this.addPropLight(group, definition, resolvedScale, height);
+    }
 
     if (definition.assetKind === "glb" && definition.modelUrl) {
       void this.loadPropModel(definition).then((source) => {
@@ -1039,7 +1083,11 @@ export class LevelScene {
         const instance = source.clone(true);
         this.prepareModelInstance(instance, definition, resolvedScale);
         group.add(instance);
+        if (!this.addPropLightsFromModelMarkers(group, instance, definition, resolvedScale, height)) {
+          this.addPropLight(group, definition, resolvedScale, height);
+        }
       }).catch((error) => {
+        this.addPropLight(group, definition, resolvedScale, height);
         console.warn(`Unable to load prop model "${definition.name}".`, error);
       });
     }
@@ -1050,10 +1098,59 @@ export class LevelScene {
     if (!definition.emitsLight || definition.lightIntensity <= 0) {
       return;
     }
-    const color = new THREE.Color(definition.lightColor || "#ffb85c");
     const y = Math.max(0.02, Math.min(propHeight + 1.4, (definition.lightOffsetY || propHeight) * scale));
+    this.addPropLightAt(group, definition, scale, new THREE.Vector3(0, y, 0));
+  }
+
+  private addPropLightsFromModelMarkers(
+    group: THREE.Group,
+    instance: THREE.Group,
+    definition: PropDefinition,
+    scale: number,
+    propHeight: number
+  ): boolean {
+    if (!definition.emitsLight || definition.lightIntensity <= 0) {
+      return false;
+    }
+
+    const markers: THREE.Object3D[] = [];
+    instance.traverse((child) => {
+      if (markers.length < 4 && this.isGlbLightMarker(child)) {
+        markers.push(child);
+      }
+    });
+    if (markers.length === 0) {
+      return false;
+    }
+
+    group.updateMatrixWorld(true);
+    instance.updateMatrixWorld(true);
+    for (const marker of markers) {
+      const markerPosition = marker.getWorldPosition(new THREE.Vector3());
+      const localPosition = group.worldToLocal(markerPosition.clone());
+      localPosition.y = Math.max(0.02, Math.min(propHeight + 1.4, localPosition.y));
+      this.addPropLightAt(group, definition, scale, localPosition);
+      this.applyEmitterMaterial(marker, definition);
+    }
+    return true;
+  }
+
+  private isGlbLightMarker(object: THREE.Object3D): boolean {
+    const normalized = object.name.toLowerCase().replace(/[^a-z0-9]+/g, "_");
+    const tokens = normalized
+      .split("_")
+      .map((token) => token.replace(/\d+$/, ""))
+      .filter(Boolean);
+    return tokens.some((token) => glbLightMarkerTokens.has(token));
+  }
+
+  private addPropLightAt(group: THREE.Group, definition: PropDefinition, scale: number, position: THREE.Vector3): void {
+    if (!definition.emitsLight || definition.lightIntensity <= 0) {
+      return;
+    }
+    const color = new THREE.Color(definition.lightColor || "#ffb85c");
     const light = new THREE.PointLight(color, definition.lightIntensity, definition.lightRange, 1.65);
-    light.position.y = y;
+    light.position.copy(position);
     group.add(light);
 
     const glow = new THREE.Mesh(
@@ -1065,9 +1162,29 @@ export class LevelScene {
         toneMapped: false
       })
     );
-    glow.position.y = y;
+    glow.position.copy(position);
     glow.renderOrder = 6;
     group.add(glow);
+  }
+
+  private applyEmitterMaterial(marker: THREE.Object3D, definition: PropDefinition): void {
+    const mesh = marker as THREE.Mesh;
+    if (!mesh.isMesh || !mesh.material) {
+      return;
+    }
+
+    const color = new THREE.Color(definition.lightColor || "#ffb85c");
+    const intensity = Math.max(0.4, definition.lightIntensity * 0.6);
+    const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    for (const material of materials) {
+      const emissiveMaterial = material as THREE.MeshStandardMaterial;
+      if (emissiveMaterial.emissive) {
+        emissiveMaterial.emissive.copy(color);
+        emissiveMaterial.emissiveIntensity = intensity;
+      }
+      material.toneMapped = false;
+      material.needsUpdate = true;
+    }
   }
 
   private shouldPropSway(definition: PropDefinition): boolean {
@@ -1262,8 +1379,8 @@ export class LevelScene {
       }
       const seed = Number(object.userData.windSeed ?? 0);
       const phase = this.random01(seed) * Math.PI * 2;
-      object.rotation.x = Math.sin(elapsed * 0.9 + phase) * 0.025;
-      object.rotation.z = Math.cos(elapsed * 0.75 + phase * 0.7) * 0.018;
+      object.rotation.x = Math.sin(elapsed * 0.9 * this.environmentWindSpeed + phase) * 0.025 * this.environmentWindStrength;
+      object.rotation.z = Math.cos(elapsed * 0.75 * this.environmentWindSpeed + phase * 0.7) * 0.018 * this.environmentWindStrength;
     }
   }
 
