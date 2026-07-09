@@ -34,7 +34,15 @@ const fallbackEnvironment: EnvironmentSettings = {
   groundColor: "#526553",
   groundTextureUrl: "",
   ambientIntensity: 1.2,
-  sunIntensity: 2
+  sunIntensity: 2,
+  backgroundModel: {
+    modelUrl: "",
+    modelFileName: "",
+    fitToMap: true,
+    scale: 1,
+    rotation: 0,
+    offsetY: 0
+  }
 };
 
 const fallbackMaterial: EnvironmentMaterialDefinition = {
@@ -164,6 +172,10 @@ export class LevelScene {
   setMode(mode: "editor" | "play"): void {
     this.mode = mode;
     this.renderLevel();
+  }
+
+  setInteractionEnabled(enabled: boolean): void {
+    this.controls.enabled = enabled;
   }
 
   setSelected(coord?: TileCoord): void {
@@ -363,6 +375,7 @@ export class LevelScene {
 
     this.applyEnvironment(this.level.environment);
     this.addGroundSurface(this.level);
+    this.addBackgroundModel(this.level);
     this.addTerrain(this.level);
     for (const obstacle of this.level.obstacles) {
       this.addObstacle(this.level, obstacle);
@@ -453,6 +466,56 @@ export class LevelScene {
     mesh.position.y = -0.035;
     mesh.receiveShadow = true;
     this.root.add(mesh);
+  }
+
+  private addBackgroundModel(level: LevelData): void {
+    const settings = level.environment?.backgroundModel;
+    if (!settings?.modelUrl) {
+      return;
+    }
+
+    const anchor = new THREE.Group();
+    anchor.rotation.y = settings.rotation || 0;
+    anchor.position.y = settings.offsetY || 0;
+    this.root.add(anchor);
+
+    void this.loadGlb(`background:${settings.modelUrl}`, settings.modelUrl)
+      .then((source) => {
+        if (!anchor.parent) {
+          return;
+        }
+        const instance = source.clone(true);
+        this.cloneModelResources(instance);
+        instance.updateMatrixWorld(true);
+        const box = new THREE.Box3().setFromObject(instance);
+        if (box.isEmpty()) {
+          return;
+        }
+        const size = box.getSize(new THREE.Vector3());
+        const authoredScale = Math.max(0.01, settings.scale || 1);
+        if (settings.fitToMap) {
+          const sourceSpan = Math.max(size.x, size.z, 0.001);
+          const mapSpan = Math.max(level.width, level.depth) * tileSize * 1.8;
+          instance.scale.multiplyScalar((mapSpan / sourceSpan) * authoredScale);
+        } else {
+          instance.scale.multiplyScalar(authoredScale);
+        }
+        instance.updateMatrixWorld(true);
+        const fittedBox = new THREE.Box3().setFromObject(instance);
+        const center = fittedBox.getCenter(new THREE.Vector3());
+        instance.position.set(-center.x, -fittedBox.min.y, -center.z);
+        instance.traverse((child) => {
+          const mesh = child as THREE.Mesh;
+          if (mesh.isMesh) {
+            mesh.castShadow = true;
+            mesh.receiveShadow = true;
+          }
+        });
+        anchor.add(instance);
+      })
+      .catch((error) => {
+        console.warn(`Unable to load background model "${settings.modelFileName || "GLB"}".`, error);
+      });
   }
 
   private addTerrain(level: LevelData): void {
@@ -607,13 +670,17 @@ export class LevelScene {
 
   private loadPropModel(definition: PropDefinition): Promise<THREE.Group> {
     const cacheKey = `${definition.id}:${definition.modelUrl}`;
+    return this.loadGlb(cacheKey, definition.modelUrl);
+  }
+
+  private loadGlb(cacheKey: string, modelUrl: string): Promise<THREE.Group> {
     const cached = this.glbCache.get(cacheKey);
     if (cached) {
       return cached;
     }
     const promise = new Promise<THREE.Group>((resolve, reject) => {
       this.gltfLoader.load(
-        definition.modelUrl,
+        modelUrl,
         (gltf) => {
           const source = gltf.scene;
           source.traverse((child) => {

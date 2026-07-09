@@ -33,6 +33,9 @@ import type {
   PropDefinition,
   PropDefinitionId,
   SectionName,
+  StoryBeat,
+  StoryPresentation,
+  StoryTrigger,
   Team,
   TerrainType,
   TileCoord,
@@ -163,13 +166,22 @@ function mergeClassDefinitions(...sets: ClassDefinition[][]): ClassDefinition[] 
 }
 
 function normalizeEnvironment(environment: Partial<EnvironmentSettings> | undefined): EnvironmentSettings {
+  const background = environment?.backgroundModel;
   return {
     skyColor: environment?.skyColor || defaultEnvironmentSettings.skyColor,
     fogColor: environment?.fogColor || defaultEnvironmentSettings.fogColor,
     groundColor: environment?.groundColor || defaultEnvironmentSettings.groundColor,
     groundTextureUrl: environment?.groundTextureUrl || "",
     ambientIntensity: Math.max(0, Math.min(4, numberOrFallback(environment?.ambientIntensity, defaultEnvironmentSettings.ambientIntensity))),
-    sunIntensity: Math.max(0, Math.min(6, numberOrFallback(environment?.sunIntensity, defaultEnvironmentSettings.sunIntensity)))
+    sunIntensity: Math.max(0, Math.min(6, numberOrFallback(environment?.sunIntensity, defaultEnvironmentSettings.sunIntensity))),
+    backgroundModel: {
+      modelUrl: typeof background?.modelUrl === "string" ? background.modelUrl : "",
+      modelFileName: typeof background?.modelFileName === "string" ? background.modelFileName : "",
+      fitToMap: background?.fitToMap ?? true,
+      scale: Math.max(0.01, Math.min(20, numberOrFallback(background?.scale, 1))),
+      rotation: numberOrFallback(background?.rotation, 0),
+      offsetY: Math.max(-20, Math.min(20, numberOrFallback(background?.offsetY, 0)))
+    }
   };
 }
 
@@ -246,7 +258,8 @@ function normalizeLevelData(level: LevelData): LevelData {
   return {
     ...level,
     environment: normalizeEnvironment(level.environment),
-    surroundings: Array.isArray(level.surroundings) ? level.surroundings : []
+    surroundings: Array.isArray(level.surroundings) ? level.surroundings : [],
+    story: Array.isArray(level.story) ? level.story : []
   };
 }
 
@@ -550,14 +563,50 @@ export class EditorApp {
     const groundInput = this.panel.querySelector<HTMLInputElement>("[data-environment='groundColor']");
     const ambientInput = this.panel.querySelector<HTMLInputElement>("[data-environment='ambientIntensity']");
     const sunInput = this.panel.querySelector<HTMLInputElement>("[data-environment='sunIntensity']");
+    const backgroundScaleInput = this.panel.querySelector<HTMLInputElement>("[data-background='scale']");
+    const backgroundRotationInput = this.panel.querySelector<HTMLInputElement>("[data-background='rotation']");
+    const backgroundOffsetInput = this.panel.querySelector<HTMLInputElement>("[data-background='offsetY']");
+    const backgroundFitInput = this.panel.querySelector<HTMLInputElement>("[data-background='fitToMap']");
     return normalizeEnvironment({
       ...level.environment,
       skyColor: skyInput?.value || level.environment.skyColor,
       fogColor: fogInput?.value || level.environment.fogColor,
       groundColor: groundInput?.value || level.environment.groundColor,
       ambientIntensity: numberOrFallback(ambientInput?.value, level.environment.ambientIntensity),
-      sunIntensity: numberOrFallback(sunInput?.value, level.environment.sunIntensity)
+      sunIntensity: numberOrFallback(sunInput?.value, level.environment.sunIntensity),
+      backgroundModel: {
+        ...level.environment.backgroundModel,
+        fitToMap: backgroundFitInput?.checked ?? level.environment.backgroundModel.fitToMap,
+        scale: numberOrFallback(backgroundScaleInput?.value, level.environment.backgroundModel.scale),
+        rotation: numberOrFallback(backgroundRotationInput?.value, level.environment.backgroundModel.rotation),
+        offsetY: numberOrFallback(backgroundOffsetInput?.value, level.environment.backgroundModel.offsetY)
+      }
     });
+  }
+
+  private readStoryDraft(): StoryBeat {
+    const triggerInput = this.panel.querySelector<HTMLSelectElement>("[data-story='trigger']");
+    const presentationInput = this.panel.querySelector<HTMLSelectElement>("[data-story='presentation']");
+    const titleInput = this.panel.querySelector<HTMLInputElement>("[data-story='title']");
+    const speakerInput = this.panel.querySelector<HTMLInputElement>("[data-story='speaker']");
+    const textInput = this.panel.querySelector<HTMLTextAreaElement>("[data-story='text']");
+    const xInput = this.panel.querySelector<HTMLInputElement>("[data-story='x']");
+    const zInput = this.panel.querySelector<HTMLInputElement>("[data-story='z']");
+    const trigger = (triggerInput?.value as StoryTrigger | undefined) ?? "levelStart";
+    return {
+      id: `story-${Date.now()}`,
+      trigger,
+      presentation: (presentationInput?.value as StoryPresentation | undefined) ?? "dialog",
+      title: titleInput?.value.trim() || "",
+      speaker: speakerInput?.value.trim() || "",
+      text: textInput?.value.trim() || "New story beat",
+      ...(trigger === "tileEnter"
+        ? {
+            x: Math.round(numberOrFallback(xInput?.value, this.state.selected?.x ?? 0)),
+            z: Math.round(numberOrFallback(zInput?.value, this.state.selected?.z ?? 0))
+          }
+        : {})
+    };
   }
 
   private applyLevelSize(): void {
@@ -622,6 +671,7 @@ export class EditorApp {
     const json = JSON.stringify(
       {
         campaign: this.campaign,
+        levels: this.levels,
         level,
         templates: this.templates,
         classes: this.classDefinitions,
@@ -637,7 +687,10 @@ export class EditorApp {
           <h1>Craft Heroes Editor</h1>
           <p>${this.state.mode === "editor" ? "Build voxel tactics levels." : "Play-test the current level data."}</p>
         </div>
-        <button data-action="toggle-mode">${this.state.mode === "editor" ? "Play" : "Edit"}</button>
+        <div class="head-actions">
+          <button data-action="open-client">Client</button>
+          <button data-action="toggle-mode">${this.state.mode === "editor" ? "Play" : "Edit"}</button>
+        </div>
       </div>
 
       <label class="field">
@@ -736,6 +789,35 @@ export class EditorApp {
           <button data-action="update-environment">Update Environment</button>
           <button data-action="clear-ground-texture">Clear Ground Texture</button>
         </div>
+        <div class="asset-preview-head">
+          <div>
+            <strong>Background GLB</strong>
+            <span>${escapeHtml(level.environment.backgroundModel.modelFileName || "No map surround loaded")}</span>
+          </div>
+          <input data-background-model type="file" accept=".glb,model/gltf-binary">
+        </div>
+        <div class="compact-grid">
+          <label class="field">
+            <span>Model Scale</span>
+            <input data-background="scale" type="number" min="0.01" max="20" step="0.05" value="${level.environment.backgroundModel.scale}">
+          </label>
+          <label class="field">
+            <span>Rotation</span>
+            <input data-background="rotation" type="number" min="-6.28" max="6.28" step="0.1" value="${level.environment.backgroundModel.rotation}">
+          </label>
+          <label class="field">
+            <span>Vertical Offset</span>
+            <input data-background="offsetY" type="number" min="-20" max="20" step="0.1" value="${level.environment.backgroundModel.offsetY}">
+          </label>
+          <label class="check-row">
+            <input data-background="fitToMap" type="checkbox" ${level.environment.backgroundModel.fitToMap ? "checked" : ""}>
+            <span>Fit around map</span>
+          </label>
+        </div>
+        <div class="button-row two">
+          <button data-action="update-background">Update Background</button>
+          <button data-action="clear-background">Clear Background</button>
+        </div>
         <div class="compact-grid">
           <label class="field">
             <span>Surround X</span>
@@ -757,6 +839,66 @@ export class EditorApp {
         <div class="button-row two">
           <button data-action="add-surrounding">Add Surrounding Prop</button>
           <button data-action="clear-surroundings">Clear Surroundings</button>
+        </div>
+      </section>
+
+      <section class="control-section">
+        <div class="section-title">
+          <strong>Story Beats</strong>
+          <span>Show dialog or full-screen story at level start, a tile, or completion.</span>
+        </div>
+        <div class="compact-grid">
+          <label class="field">
+            <span>Trigger</span>
+            <select data-story="trigger">
+              <option value="levelStart">Level Start</option>
+              <option value="tileEnter">Tile Enter</option>
+              <option value="levelComplete">Level Complete</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Presentation</span>
+            <select data-story="presentation">
+              <option value="dialog">Dialog</option>
+              <option value="screen">Story Screen</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Tile X</span>
+            <input data-story="x" type="number" min="0" max="${Math.max(0, level.width - 1)}" step="1" value="${this.state.selected?.x ?? 0}">
+          </label>
+          <label class="field">
+            <span>Tile Z</span>
+            <input data-story="z" type="number" min="0" max="${Math.max(0, level.depth - 1)}" step="1" value="${this.state.selected?.z ?? 0}">
+          </label>
+          <label class="field">
+            <span>Title</span>
+            <input data-story="title" type="text" placeholder="Optional title">
+          </label>
+          <label class="field">
+            <span>Speaker</span>
+            <input data-story="speaker" type="text" placeholder="Optional speaker">
+          </label>
+        </div>
+        <label class="field">
+          <span>Story Text</span>
+          <textarea class="story-textarea" data-story="text" placeholder="What happens here?"></textarea>
+        </label>
+        <button data-action="add-story">Add Story Beat</button>
+        <div class="story-list">
+          ${level.story
+            .map(
+              (beat) => `
+                <div class="story-item">
+                  <div>
+                    <strong>${escapeHtml(beat.title || beat.speaker || beat.presentation)}</strong>
+                    <span>${escapeHtml(beat.trigger)}${beat.trigger === "tileEnter" ? ` @ ${beat.x}, ${beat.z}` : ""} / ${escapeHtml(beat.text)}</span>
+                  </div>
+                  <button data-action="remove-story" data-story-id="${escapeHtml(beat.id)}" title="Remove story beat" aria-label="Remove story beat">&times;</button>
+                </div>
+              `
+            )
+            .join("") || `<span class="empty-note">No story beats in this level.</span>`}
         </div>
       </section>
 
@@ -1124,8 +1266,12 @@ export class EditorApp {
       input.addEventListener("change", () => this.handleGroundTextureUpload(input));
     });
 
+    this.panel.querySelectorAll<HTMLInputElement>("[data-background-model]").forEach((input) => {
+      input.addEventListener("change", () => this.handleBackgroundModelUpload(input));
+    });
+
     this.panel.querySelectorAll<HTMLButtonElement>("[data-action]").forEach((button) => {
-      button.addEventListener("click", () => this.handleAction(button.dataset.action ?? ""));
+      button.addEventListener("click", () => this.handleAction(button.dataset.action ?? "", button.dataset.storyId));
     });
 
     const chip = this.root.querySelector("#status-chip");
@@ -1273,8 +1419,45 @@ export class EditorApp {
     reader.readAsDataURL(file);
   }
 
-  private handleAction(action: string): void {
-    if (action === "toggle-mode") {
+  private handleBackgroundModelUpload(input: HTMLInputElement): void {
+    const file = input.files?.[0];
+    if (!file) {
+      return;
+    }
+    const isGlb = file.name.toLowerCase().endsWith(".glb") || file.type === "model/gltf-binary";
+    if (!isGlb) {
+      this.flash("Background model upload needs a .glb file.");
+      return;
+    }
+    const reader = new FileReader();
+    reader.addEventListener("load", () => {
+      const level = this.currentLevel();
+      const next = normalizeLevelData({
+        ...level,
+        environment: {
+          ...this.readEnvironmentDraft(level),
+          backgroundModel: {
+            ...this.readEnvironmentDraft(level).backgroundModel,
+            modelUrl: String(reader.result ?? ""),
+            modelFileName: file.name
+          }
+        }
+      });
+      this.setCurrentLevel(next);
+      this.scene.setLevel(next);
+      this.updatePanel();
+      this.flash(`Loaded background ${file.name}.`);
+    });
+    reader.addEventListener("error", () => {
+      this.flash("Background model upload failed.");
+    });
+    reader.readAsDataURL(file);
+  }
+
+  private handleAction(action: string, storyId?: string): void {
+    if (action === "open-client") {
+      window.location.href = `${window.location.pathname}?view=game`;
+    } else if (action === "toggle-mode") {
       this.state.mode = this.state.mode === "editor" ? "play" : "editor";
       this.scene.setMode(this.state.mode);
       this.updatePanel();
@@ -1356,6 +1539,33 @@ export class EditorApp {
       this.scene.setLevel(next);
       this.updatePanel();
       this.flash("Updated level environment.");
+    } else if (action === "update-background") {
+      const level = this.currentLevel();
+      const next = {
+        ...level,
+        environment: this.readEnvironmentDraft(level)
+      };
+      this.setCurrentLevel(next);
+      this.scene.setLevel(next);
+      this.updatePanel();
+      this.flash("Updated background model placement.");
+    } else if (action === "clear-background") {
+      const level = this.currentLevel();
+      const next = {
+        ...level,
+        environment: {
+          ...this.readEnvironmentDraft(level),
+          backgroundModel: {
+            ...level.environment.backgroundModel,
+            modelUrl: "",
+            modelFileName: ""
+          }
+        }
+      };
+      this.setCurrentLevel(next);
+      this.scene.setLevel(next);
+      this.updatePanel();
+      this.flash("Cleared background model.");
     } else if (action === "clear-ground-texture") {
       const level = this.currentLevel();
       const next = {
@@ -1403,6 +1613,24 @@ export class EditorApp {
       this.scene.setLevel(next);
       this.updatePanel();
       this.flash("Cleared surrounding props.");
+    } else if (action === "add-story") {
+      const level = this.currentLevel();
+      const next = {
+        ...level,
+        story: [...level.story, this.readStoryDraft()]
+      };
+      this.setCurrentLevel(next);
+      this.updatePanel();
+      this.flash("Added story beat.");
+    } else if (action === "remove-story" && storyId) {
+      const level = this.currentLevel();
+      const next = {
+        ...level,
+        story: level.story.filter((beat) => beat.id !== storyId)
+      };
+      this.setCurrentLevel(next);
+      this.updatePanel();
+      this.flash("Removed story beat.");
     } else if (action === "duplicate-level") {
       const source = this.currentLevel();
       const copy = cloneLevel(source);
@@ -1468,6 +1696,7 @@ export class EditorApp {
       const parsed = JSON.parse(textarea.value) as {
         campaign?: CampaignData;
         level?: LevelData;
+        levels?: LevelData[];
         templates?: UnitTemplate[];
         classes?: ClassDefinition[];
         classDefinitions?: ClassDefinition[];
@@ -1478,6 +1707,9 @@ export class EditorApp {
       };
       if (parsed.campaign) {
         this.campaign = parsed.campaign;
+      }
+      if (parsed.levels?.length) {
+        this.levels = parsed.levels.map((level) => normalizeLevelData(level));
       }
       const incomingMaterials = parsed.terrainMaterials ?? parsed.environmentMaterials;
       if (incomingMaterials?.length) {
@@ -1511,11 +1743,14 @@ export class EditorApp {
       }
       if (parsed.level) {
         const normalizedLevel = normalizeLevelData(parsed.level);
-        this.setCurrentLevel(normalizedLevel);
-        if (!this.levels.some((level) => level.id === parsed.level?.id)) {
+        if (this.levels.some((level) => level.id === normalizedLevel.id)) {
+          this.setCurrentLevel(normalizedLevel);
+        } else {
           this.levels.push(normalizedLevel);
         }
         this.state.levelId = normalizedLevel.id;
+      } else if (!this.levels.some((level) => level.id === this.state.levelId)) {
+        this.state.levelId = this.levels.find((level) => level.id === this.campaign.startLevel)?.id ?? this.levels[0].id;
       }
       this.render(true);
       this.flash("Imported editor JSON.");

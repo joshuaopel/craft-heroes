@@ -117,7 +117,15 @@ export const defaultEnvironmentSettings: EnvironmentSettings = {
   groundColor: "#526553",
   groundTextureUrl: "",
   ambientIntensity: 1.2,
-  sunIntensity: 2
+  sunIntensity: 2,
+  backgroundModel: {
+    modelUrl: "",
+    modelFileName: "",
+    fitToMap: true,
+    scale: 1,
+    rotation: 0,
+    offsetY: 0
+  }
 };
 
 export const defaultEnvironmentMaterials: EnvironmentMaterialDefinition[] = [
@@ -347,7 +355,27 @@ export const forestPass: LevelData = {
     unit("enemy-1", "enemy", "guard-cube", 8, 1)
   ],
   objectives: [{ type: "defeatTeam", team: "enemy" }],
-  links: [{ id: "ridge-link", label: "Continue to Ridge Ambush", to: "ridge-ambush-02" }]
+  links: [{ id: "ridge-link", label: "Continue to Ridge Ambush", to: "ridge-ambush-02" }],
+  story: [
+    {
+      id: "forest-opening",
+      trigger: "levelStart",
+      presentation: "screen",
+      title: "The Forest Pass",
+      speaker: "",
+      text: "The road narrows ahead. Break the guard line before the ridge closes around you."
+    },
+    {
+      id: "forest-warning",
+      trigger: "tileEnter",
+      presentation: "dialog",
+      title: "",
+      speaker: "Ranger",
+      text: "That rise gives us a clean line of sight.",
+      x: 3,
+      z: 6
+    }
+  ]
 };
 
 forestPass.tiles[0][3].height = 2;
@@ -393,7 +421,25 @@ export const ridgeAmbush: LevelData = {
     unit("enemy-2", "enemy", "guard-cube", 8, 4)
   ],
   objectives: [{ type: "surviveRounds", rounds: 5 }],
-  links: []
+  links: [],
+  story: [
+    {
+      id: "ridge-opening",
+      trigger: "levelStart",
+      presentation: "dialog",
+      title: "",
+      speaker: "Mage",
+      text: "They have the high ground. Twist your build before they choose the range of this fight."
+    },
+    {
+      id: "ridge-finale",
+      trigger: "levelComplete",
+      presentation: "screen",
+      title: "The Ridge Holds",
+      speaker: "",
+      text: "The ambush breaks. Beyond the ridge, the road into the crafted wilds is open."
+    }
+  ]
 };
 
 for (let z = 0; z < ridgeAmbush.depth; z += 1) {

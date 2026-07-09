@@ -138,6 +138,11 @@ textarea {
   align-items: flex-start;
 }
 
+.head-actions {
+  display: flex;
+  gap: 7px;
+}
+
 .panel-head h1 {
   margin: 0;
   font-size: 18px;
@@ -279,6 +284,20 @@ textarea {
   font-size: 12px;
 }
 
+.asset-preview-head > div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.asset-preview-head > div span {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .asset-preview-head img {
   width: 46px;
   height: 46px;
@@ -351,6 +370,46 @@ textarea {
   padding: 0 0 0 16px;
 }
 
+.story-textarea {
+  min-height: 86px;
+}
+
+.story-list {
+  display: grid;
+  gap: 7px;
+}
+
+.story-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 34px;
+  gap: 8px;
+  align-items: center;
+  padding: 8px;
+  border: 1px solid rgba(238, 247, 239, 0.12);
+  border-radius: 7px;
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.story-item > div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.story-item strong {
+  font-size: 11px;
+}
+
+.story-item span,
+.empty-note {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .status-chip {
   position: absolute;
   left: 16px;
@@ -364,6 +423,158 @@ textarea {
   box-shadow: 0 14px 34px rgba(0, 0, 0, 0.34);
   backdrop-filter: blur(10px);
   font-size: 12px;
+}
+
+.client-hud {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  right: 16px;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+  pointer-events: none;
+}
+
+.mission-chip {
+  max-width: min(420px, calc(100vw - 190px));
+  display: grid;
+  gap: 2px;
+  padding: 11px 14px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: rgba(9, 13, 14, 0.82);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.3);
+  backdrop-filter: blur(10px);
+}
+
+.mission-chip strong {
+  font-size: 15px;
+}
+
+.mission-chip span {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.mission-chip span:first-child {
+  color: var(--accent);
+  font-weight: 800;
+}
+
+.client-actions {
+  display: flex;
+  gap: 7px;
+  pointer-events: auto;
+}
+
+.client-actions button,
+.client-footer button {
+  padding: 0 12px;
+  background: rgba(9, 13, 14, 0.86);
+  backdrop-filter: blur(10px);
+}
+
+.client-footer {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 7px 7px 7px 12px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: rgba(9, 13, 14, 0.82);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.3);
+  backdrop-filter: blur(10px);
+}
+
+.client-footer span {
+  color: var(--muted);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.story-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: none;
+}
+
+.story-layer.open {
+  display: flex;
+}
+
+.story-layer.story-screen {
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(5, 8, 9, 0.78);
+  backdrop-filter: blur(8px);
+}
+
+.story-layer.story-dialog {
+  align-items: flex-end;
+  justify-content: center;
+  padding: 24px 24px 30px;
+  background: linear-gradient(to bottom, transparent 35%, rgba(5, 8, 9, 0.74));
+}
+
+.story-panel {
+  width: min(680px, 100%);
+  padding: 20px;
+  border: 1px solid rgba(238, 247, 239, 0.24);
+  border-radius: 8px;
+  background: rgba(11, 16, 17, 0.96);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.48);
+}
+
+.story-screen .story-panel {
+  text-align: center;
+}
+
+.story-panel h2 {
+  margin: 5px 0 8px;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 40px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+.story-panel p {
+  margin: 0;
+  color: #d4dfd6;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 17px;
+  line-height: 1.55;
+}
+
+.story-panel button {
+  float: right;
+  margin-top: 18px;
+  padding: 0 18px;
+  border-color: rgba(96, 215, 228, 0.55);
+}
+
+.story-speaker {
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 @media (max-width: 860px) {
@@ -383,5 +594,49 @@ textarea {
     right: 10px;
     max-width: none;
     border-radius: 8px;
+  }
+
+  .client-hud {
+    top: 10px;
+    left: 10px;
+    right: 10px;
+  }
+
+  .mission-chip {
+    max-width: calc(100vw - 148px);
+    padding: 9px 10px;
+  }
+
+  .client-actions {
+    display: grid;
+  }
+
+  .client-actions button {
+    min-height: 30px;
+  }
+
+  .client-footer {
+    right: 10px;
+    bottom: 10px;
+  }
+
+  .client-footer span {
+    display: none;
+  }
+
+  .story-layer.story-dialog {
+    padding: 12px;
+  }
+
+  .story-panel {
+    padding: 16px;
+  }
+
+  .story-panel p {
+    font-size: 15px;
+  }
+
+  .story-panel h2 {
+    font-size: 28px;
   }
 }

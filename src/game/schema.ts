@@ -73,6 +73,16 @@ export interface EnvironmentSettings {
   groundTextureUrl: string;
   ambientIntensity: number;
   sunIntensity: number;
+  backgroundModel: BackgroundModelSettings;
+}
+
+export interface BackgroundModelSettings {
+  modelUrl: string;
+  modelFileName: string;
+  fitToMap: boolean;
+  scale: number;
+  rotation: number;
+  offsetY: number;
 }
 
 export interface TileData {
@@ -128,6 +138,20 @@ export interface LevelLink {
   to: string;
 }
 
+export type StoryTrigger = "levelStart" | "tileEnter" | "levelComplete";
+export type StoryPresentation = "dialog" | "screen";
+
+export interface StoryBeat {
+  id: string;
+  trigger: StoryTrigger;
+  presentation: StoryPresentation;
+  title: string;
+  speaker: string;
+  text: string;
+  x?: number;
+  z?: number;
+}
+
 export interface LevelData {
   id: string;
   name: string;
@@ -140,6 +164,7 @@ export interface LevelData {
   units: UnitData[];
   objectives: LevelObjective[];
   links: LevelLink[];
+  story: StoryBeat[];
 }
 
 export interface CampaignLevelRef {
