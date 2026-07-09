@@ -1456,7 +1456,7 @@ export class EditorApp {
 
   private handleAction(action: string, storyId?: string): void {
     if (action === "open-client") {
-      window.location.href = `${window.location.pathname}?view=game`;
+      window.location.href = new URL("client.html", window.location.href).href;
     } else if (action === "toggle-mode") {
       this.state.mode = this.state.mode === "editor" ? "play" : "editor";
       this.scene.setMode(this.state.mode);

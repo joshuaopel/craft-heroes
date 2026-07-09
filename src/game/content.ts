@@ -25,17 +25,17 @@ export const defaultClassDefinitions: ClassDefinition[] = [
     color: "#d24a35",
     sections: {
       head: {
-        imageUrl: "/assets/classes/warrior-head.png",
+        imageUrl: "./assets/classes/warrior-head.png",
         stats: stats(1, 3, 0, 1, 0),
         conditions: ["Braced: ignore first push"]
       },
       body: {
-        imageUrl: "/assets/classes/warrior-body.png",
+        imageUrl: "./assets/classes/warrior-body.png",
         stats: stats(4, 3, 0, 1, 0),
         conditions: ["Melee: attacks the front tile"]
       },
       legs: {
-        imageUrl: "/assets/classes/warrior-legs.png",
+        imageUrl: "./assets/classes/warrior-legs.png",
         stats: stats(0, 2, 2, 0, 0),
         conditions: ["Hold line: +1 defense if unmoved"]
       }
@@ -47,17 +47,17 @@ export const defaultClassDefinitions: ClassDefinition[] = [
     color: "#46a65c",
     sections: {
       head: {
-        imageUrl: "/assets/classes/healer-head.png",
+        imageUrl: "./assets/classes/healer-head.png",
         stats: stats(0, 1, 0, 3, 3),
         conditions: ["Cleanse: clears one condition"]
       },
       body: {
-        imageUrl: "/assets/classes/healer-body.png",
+        imageUrl: "./assets/classes/healer-body.png",
         stats: stats(1, 2, 0, 2, 4),
         conditions: ["Mend: restores adjacent ally HP"]
       },
       legs: {
-        imageUrl: "/assets/classes/healer-legs.png",
+        imageUrl: "./assets/classes/healer-legs.png",
         stats: stats(0, 1, 2, 0, 2),
         conditions: ["Sanctuary: ignores water cost"]
       }
@@ -69,17 +69,17 @@ export const defaultClassDefinitions: ClassDefinition[] = [
     color: "#4f7f3c",
     sections: {
       head: {
-        imageUrl: "/assets/classes/ranger-head.png",
+        imageUrl: "./assets/classes/ranger-head.png",
         stats: stats(2, 1, 0, 4, 1),
         conditions: ["Scout: extends line of sight from height"]
       },
       body: {
-        imageUrl: "/assets/classes/ranger-body.png",
+        imageUrl: "./assets/classes/ranger-body.png",
         stats: stats(3, 1, 0, 5, 0),
         conditions: ["Volley: blocked by cover"]
       },
       legs: {
-        imageUrl: "/assets/classes/ranger-legs.png",
+        imageUrl: "./assets/classes/ranger-legs.png",
         stats: stats(0, 1, 4, 0, 0),
         conditions: ["Swift: may rotate after moving"]
       }
@@ -91,17 +91,17 @@ export const defaultClassDefinitions: ClassDefinition[] = [
     color: "#6b4fa0",
     sections: {
       head: {
-        imageUrl: "/assets/classes/mage-head.png",
+        imageUrl: "./assets/classes/mage-head.png",
         stats: stats(3, 1, 0, 4, 1),
         conditions: ["Arcane sight: ignores low cover"]
       },
       body: {
-        imageUrl: "/assets/classes/mage-body.png",
+        imageUrl: "./assets/classes/mage-body.png",
         stats: stats(4, 1, 0, 3, 2),
         conditions: ["Blast: affects nearby target tiles"]
       },
       legs: {
-        imageUrl: "/assets/classes/mage-legs.png",
+        imageUrl: "./assets/classes/mage-legs.png",
         stats: stats(0, 0, 2, 0, 1),
         conditions: ["Blink: crosses one height step"]
       }

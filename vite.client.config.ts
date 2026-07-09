@@ -4,9 +4,10 @@ export default defineConfig({
   base: "./",
   build: {
     target: "es2020",
+    outDir: "dist-client",
+    emptyOutDir: true,
     rollupOptions: {
       input: {
-        editor: "index.html",
         client: "client.html"
       }
     }

@@ -17,7 +17,7 @@ import type {
 } from "../game/schema";
 import { LevelScene } from "../render/LevelScene";
 
-interface ClientBundle {
+export interface ClientBundle {
   campaign?: CampaignData;
   levels?: LevelData[];
   level?: LevelData;
@@ -27,6 +27,29 @@ interface ClientBundle {
   environmentMaterials?: EnvironmentMaterialDefinition[];
   props?: PropDefinition[];
   propDefinitions?: PropDefinition[];
+}
+
+export interface ClientSaveData {
+  version: 1;
+  campaignId: string;
+  currentLevelId: string;
+  shownStory: string[];
+}
+
+export interface ClientPresence {
+  campaignId: string;
+  campaignTitle: string;
+  levelId: string;
+  levelName: string;
+}
+
+export interface ClientAppOptions {
+  showContentLoader?: boolean;
+  showEditorLink?: boolean;
+  requestContent?: () => Promise<unknown | unknown[] | undefined>;
+  onProgress?: (save: ClientSaveData) => void | Promise<void>;
+  onPresence?: (presence: ClientPresence) => void | Promise<void>;
+  onAchievement?: (achievementId: string) => void | Promise<void>;
 }
 
 function escapeHtml(value: string): string {
@@ -103,8 +126,14 @@ export class ClientApp {
   private storyQueue: StoryBeat[] = [];
   private shownStory = new Set<string>();
   private advancingAfterStory = false;
+  private started = false;
 
-  constructor(private readonly root: HTMLElement) {
+  constructor(
+    private readonly root: HTMLElement,
+    private readonly options: ClientAppOptions = {}
+  ) {
+    const showContentLoader = options.showContentLoader ?? true;
+    const showEditorLink = options.showEditorLink ?? false;
     this.root.className = "app-shell client-shell";
     this.root.innerHTML = `
       <canvas class="world-canvas" aria-label="Craft Heroes game board"></canvas>
@@ -115,8 +144,8 @@ export class ClientApp {
           <span id="client-objective"></span>
         </div>
         <div class="client-actions">
-          <button data-client-action="load">Load JSON</button>
-          <button data-client-action="editor">Editor</button>
+          ${showContentLoader ? `<button data-client-action="load">Load Game</button>` : ""}
+          ${showEditorLink ? `<button data-client-action="editor">Editor</button>` : ""}
         </div>
       </div>
       <div class="client-footer">
@@ -136,6 +165,13 @@ export class ClientApp {
     this.scene.setMode("play");
     this.scene.onTileClick((coord) => this.handleTile(coord));
     this.bindEvents();
+  }
+
+  start(): void {
+    if (this.started) {
+      return;
+    }
+    this.started = true;
     this.loadLevel(this.currentLevelId);
   }
 
@@ -144,7 +180,17 @@ export class ClientApp {
       button.addEventListener("click", () => {
         const action = button.dataset.clientAction;
         if (action === "load") {
-          this.fileInput.click();
+          if (this.options.requestContent) {
+            void this.options.requestContent().then((content) => {
+              if (content !== undefined) {
+                this.loadContent(content);
+              }
+            }).catch((error) => {
+              this.showError(error instanceof Error ? error.message : "Unable to load game content.");
+            });
+          } else {
+            this.fileInput.click();
+          }
         } else if (action === "editor") {
           window.location.href = window.location.pathname;
         } else if (action === "complete") {
@@ -153,6 +199,97 @@ export class ClientApp {
       });
     });
     this.fileInput.addEventListener("change", () => void this.loadFiles(this.fileInput.files));
+  }
+
+  loadContent(content: unknown | unknown[]): boolean {
+    try {
+      const documents = Array.isArray(content) && content.every(isLevel) ? content : Array.isArray(content) ? content : [content];
+      const incomingLevels: LevelData[] = [];
+      let incomingCampaign: CampaignData | undefined;
+      let bundleDefinitions: ClientBundle = {};
+
+      for (const parsed of documents) {
+        if (isLevel(parsed)) {
+          incomingLevels.push(parsed);
+          continue;
+        }
+        if (isCampaign(parsed)) {
+          incomingCampaign = parsed;
+          continue;
+        }
+        const bundle = parsed as ClientBundle;
+        bundleDefinitions = { ...bundleDefinitions, ...bundle };
+        if (bundle.campaign) {
+          incomingCampaign = bundle.campaign;
+        }
+        if (bundle.levels?.every(isLevel)) {
+          incomingLevels.push(...bundle.levels);
+        }
+        if (bundle.level && isLevel(bundle.level)) {
+          incomingLevels.push(bundle.level);
+        }
+      }
+
+      if (incomingLevels.length === 0) {
+        throw new Error("No level data found.");
+      }
+      const byId = new Map(incomingLevels.map((level) => [level.id, normalizeLevel(level)]));
+      this.levels = [...byId.values()];
+      this.campaign = incomingCampaign ?? {
+        id: "loaded-campaign",
+        title: "Loaded Craft Heroes Campaign",
+        startLevel: this.levels[0].id,
+        levels: this.levels.map((level, index) => ({
+          id: level.id,
+          file: "",
+          next: this.levels[index + 1] ? [this.levels[index + 1].id] : []
+        }))
+      };
+      this.classDefinitions = bundleDefinitions.classes ?? bundleDefinitions.classDefinitions ?? structuredClone(defaultClassDefinitions);
+      this.environmentMaterials =
+        bundleDefinitions.terrainMaterials ??
+        bundleDefinitions.environmentMaterials ??
+        structuredClone(defaultEnvironmentMaterials);
+      this.propDefinitions = bundleDefinitions.props ?? bundleDefinitions.propDefinitions ?? structuredClone(defaultPropDefinitions);
+      this.scene.setClassDefinitions(this.classDefinitions);
+      this.scene.setEnvironmentMaterials(this.environmentMaterials);
+      this.scene.setPropDefinitions(this.propDefinitions);
+      this.storyQueue = [];
+      this.shownStory.clear();
+      const startId = this.levels.some((level) => level.id === this.campaign.startLevel)
+        ? this.campaign.startLevel
+        : this.levels[0].id;
+      this.started = true;
+      this.loadLevel(startId);
+      return true;
+    } catch (error) {
+      this.showError(error instanceof Error ? error.message : "Unable to read campaign data.");
+      return false;
+    }
+  }
+
+  exportSave(): ClientSaveData {
+    return {
+      version: 1,
+      campaignId: this.campaign.id,
+      currentLevelId: this.currentLevelId,
+      shownStory: [...this.shownStory]
+    };
+  }
+
+  restoreSave(save: ClientSaveData): boolean {
+    if (
+      save.version !== 1 ||
+      save.campaignId !== this.campaign.id ||
+      !this.levels.some((level) => level.id === save.currentLevelId)
+    ) {
+      return false;
+    }
+    this.storyQueue = [];
+    this.shownStory = new Set(save.shownStory);
+    this.started = true;
+    this.loadLevel(save.currentLevelId);
+    return true;
   }
 
   private currentLevel(): LevelData | undefined {
@@ -171,6 +308,14 @@ export class ClientApp {
     this.scene.setSelected(undefined);
     this.updateHud(level);
     this.enqueueStory(level.story.filter((beat) => beat.trigger === "levelStart"));
+    this.invokeHost("presence", () =>
+      this.options.onPresence?.({
+        campaignId: this.campaign.id,
+        campaignTitle: this.campaign.title,
+        levelId: level.id,
+        levelName: level.name
+      })
+    );
   }
 
   private updateHud(level: LevelData): void {
@@ -241,6 +386,7 @@ export class ClientApp {
     this.storyLayer.querySelector<HTMLButtonElement>("[data-story-continue]")?.addEventListener("click", () => {
       this.storyQueue.shift();
       this.renderStory();
+      this.notifyProgress();
     });
   }
 
@@ -258,6 +404,7 @@ export class ClientApp {
       this.campaign.levels[currentIndex + 1]?.id;
     if (nextId && this.levels.some((level) => level.id === nextId)) {
       this.loadLevel(nextId);
+      this.notifyProgress();
       return;
     }
     this.scene.setInteractionEnabled(false);
@@ -273,7 +420,11 @@ export class ClientApp {
     this.storyLayer.querySelector<HTMLButtonElement>("[data-restart-campaign]")?.addEventListener("click", () => {
       this.shownStory.clear();
       this.loadLevel(this.campaign.startLevel);
+      this.notifyProgress();
     });
+    this.invokeHost("achievement", () =>
+      this.options.onAchievement?.(`campaign.${this.campaign.id}.complete`)
+    );
   }
 
   private async loadFiles(files: FileList | null): Promise<void> {
@@ -282,65 +433,24 @@ export class ClientApp {
     }
     try {
       const parsedFiles = await Promise.all([...files].map(async (file) => JSON.parse(await file.text()) as unknown));
-      const incomingLevels: LevelData[] = [];
-      let incomingCampaign: CampaignData | undefined;
-      let bundleDefinitions: ClientBundle = {};
-
-      for (const parsed of parsedFiles) {
-        if (isLevel(parsed)) {
-          incomingLevels.push(parsed);
-          continue;
-        }
-        if (isCampaign(parsed)) {
-          incomingCampaign = parsed;
-          continue;
-        }
-        const bundle = parsed as ClientBundle;
-        bundleDefinitions = { ...bundleDefinitions, ...bundle };
-        if (bundle.campaign) {
-          incomingCampaign = bundle.campaign;
-        }
-        if (bundle.levels?.every(isLevel)) {
-          incomingLevels.push(...bundle.levels);
-        }
-        if (bundle.level && isLevel(bundle.level)) {
-          incomingLevels.push(bundle.level);
-        }
-      }
-
-      if (incomingLevels.length === 0) {
-        throw new Error("No level data found.");
-      }
-      const byId = new Map(incomingLevels.map((level) => [level.id, normalizeLevel(level)]));
-      this.levels = [...byId.values()];
-      this.campaign = incomingCampaign ?? {
-        id: "loaded-campaign",
-        title: "Loaded Craft Heroes Campaign",
-        startLevel: this.levels[0].id,
-        levels: this.levels.map((level, index) => ({
-          id: level.id,
-          file: "",
-          next: this.levels[index + 1] ? [this.levels[index + 1].id] : []
-        }))
-      };
-      this.classDefinitions = bundleDefinitions.classes ?? bundleDefinitions.classDefinitions ?? structuredClone(defaultClassDefinitions);
-      this.environmentMaterials =
-        bundleDefinitions.terrainMaterials ??
-        bundleDefinitions.environmentMaterials ??
-        structuredClone(defaultEnvironmentMaterials);
-      this.propDefinitions = bundleDefinitions.props ?? bundleDefinitions.propDefinitions ?? structuredClone(defaultPropDefinitions);
-      this.scene.setClassDefinitions(this.classDefinitions);
-      this.scene.setEnvironmentMaterials(this.environmentMaterials);
-      this.scene.setPropDefinitions(this.propDefinitions);
-      this.storyQueue = [];
-      this.shownStory.clear();
-      const startId = this.levels.some((level) => level.id === this.campaign.startLevel)
-        ? this.campaign.startLevel
-        : this.levels[0].id;
-      this.loadLevel(startId);
+      this.loadContent(parsedFiles);
       this.fileInput.value = "";
     } catch (error) {
       this.showError(error instanceof Error ? error.message : "Unable to read campaign JSON.");
+    }
+  }
+
+  private notifyProgress(): void {
+    this.invokeHost("save", () => this.options.onProgress?.(this.exportSave()));
+  }
+
+  private invokeHost(label: string, callback: () => void | Promise<void> | undefined): void {
+    try {
+      void Promise.resolve(callback()).catch((error) => {
+        console.warn(`Desktop host ${label} callback failed.`, error);
+      });
+    } catch (error) {
+      console.warn(`Desktop host ${label} callback failed.`, error);
     }
   }
 

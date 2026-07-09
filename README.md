@@ -11,6 +11,18 @@ npm install
 npm run dev
 ```
 
+The editor opens at `index.html`. The standalone game client opens at `client.html`.
+
+## Standalone Client
+
+```powershell
+npm run build:client
+```
+
+This produces `dist-client/`, the renderer payload intended for a future Electron package. The client does not import the editor and exposes a small preload bridge for campaign content, save data, rich presence, and achievements.
+
+See [Desktop client integration](docs/desktop-client.md).
+
 ## Editor Foundation
 
 The production branch splits the game into a Vite + TypeScript app with:
