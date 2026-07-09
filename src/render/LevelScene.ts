@@ -20,7 +20,7 @@ import type {
 const tileSize = 1.08;
 const heightStep = 0.28;
 const baseTileHeight = 0.18;
-const maxGrassBlades = 2600;
+const maxGrassVoxels = 2200;
 const sectionNames: SectionName[] = ["head", "body", "legs"];
 const dirOrder = ["S", "E", "N", "W"];
 
@@ -474,7 +474,7 @@ export class LevelScene {
     this.addBackgroundModel(this.level);
     this.addTerrain(this.level);
     this.addWaterSeaweed(this.level);
-    this.addGrassBlades(this.level);
+    this.addGrassVoxels(this.level);
     for (const obstacle of this.level.obstacles) {
       this.addObstacle(this.level, obstacle);
     }
@@ -625,6 +625,7 @@ export class LevelScene {
     for (let z = 0; z < level.depth; z += 1) {
       for (let x = 0; x < level.width; x += 1) {
         const tile = level.tiles[z][x];
+        const surfaceEffect = this.surfaceEffectFor(tile.terrain);
         const totalHeight = baseTileHeight + tile.height * heightStep;
         const terrainMaterials = this.terrainMaterialFor(tile.terrain);
         const group = new THREE.Group();
@@ -634,9 +635,13 @@ export class LevelScene {
         const topMesh = new THREE.Mesh(this.createTerrainTopGeometry(width, depth, tile.terrain, tile.height, x, z), terrainMaterials.top);
         topMesh.position.y = totalHeight + 0.002;
         topMesh.rotation.x = -Math.PI / 2;
-        topMesh.renderOrder = this.surfaceEffectFor(tile.terrain) === "water" ? 4 : 0;
+        topMesh.renderOrder = surfaceEffect === "water" ? 4 : 0;
         topMesh.receiveShadow = true;
         group.add(topMesh);
+
+        if (surfaceEffect === "water") {
+          this.addWaterFloor(group, width, depth, terrainMaterials.sideFull);
+        }
 
         this.addTerrainSideBand(group, width, depth, 0, baseTileHeight, terrainMaterials.sideHalf);
         for (let step = 0; step < tile.height; step += 1) {
@@ -660,10 +665,20 @@ export class LevelScene {
     }
   }
 
+  private addWaterFloor(group: THREE.Group, width: number, depth: number, material: THREE.MeshStandardMaterial): void {
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(width, depth), material);
+    mesh.position.y = baseTileHeight + 0.004;
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.receiveShadow = true;
+    mesh.renderOrder = 1;
+    group.add(mesh);
+  }
+
   private addWaterSeaweed(level: LevelData): void {
     const positions: number[] = [];
     const anchors: number[] = [];
     const sways: number[] = [];
+    const colors: number[] = [];
 
     for (let z = 0; z < level.depth; z += 1) {
       for (let x = 0; x < level.width; x += 1) {
@@ -694,6 +709,8 @@ export class LevelScene {
             positions,
             anchors,
             sways,
+            colors,
+            "seaweed",
             new THREE.Vector3(centerX - rightX, baseY, centerZ - rightZ),
             new THREE.Vector3(centerX + rightX, baseY, centerZ + rightZ),
             new THREE.Vector3(centerX + tipLean, baseY + height, centerZ - tipLean * 0.6),
@@ -708,20 +725,19 @@ export class LevelScene {
       return;
     }
 
-    const mesh = new THREE.Mesh(this.createBladeGeometry(positions, anchors, sways), this.createSwayBladeMaterial("seaweed"));
+    const mesh = new THREE.Mesh(this.createBladeGeometry(positions, anchors, sways, colors), this.createSwayBladeMaterial("seaweed"));
     mesh.renderOrder = 3;
     this.root.add(mesh);
   }
 
-  private addGrassBlades(level: LevelData): void {
-    const positions: number[] = [];
-    const anchors: number[] = [];
-    const sways: number[] = [];
-    let bladeTotal = 0;
+  private addGrassVoxels(level: LevelData): void {
+    const matrices: THREE.Matrix4[] = [];
+    const colors: THREE.Color[] = [];
+    const dummy = new THREE.Object3D();
 
     for (let z = 0; z < level.depth; z += 1) {
       for (let x = 0; x < level.width; x += 1) {
-        if (bladeTotal >= maxGrassBlades || this.tileHasObstacle(level, x, z)) {
+        if (matrices.length >= maxGrassVoxels || this.tileHasObstacle(level, x, z) || this.tileHasUnit(level, x, z)) {
           continue;
         }
         const tile = level.tiles[z][x];
@@ -731,42 +747,46 @@ export class LevelScene {
           continue;
         }
 
-        const bladeCount = Math.min(Math.max(0, Math.round(grassDensity)), maxGrassBlades - bladeTotal);
+        const voxelCount = Math.min(Math.max(0, Math.round(grassDensity * 0.65)), maxGrassVoxels - matrices.length);
         const center = this.worldPosition(level, x, z, this.tileTopY(level, x, z) + 0.012);
-        for (let blade = 0; blade < bladeCount; blade += 1) {
-          const seed = this.hashTile(`${tile.terrain}:grass:${blade}`, x, z);
+        for (let voxel = 0; voxel < voxelCount; voxel += 1) {
+          const seed = this.hashTile(`${tile.terrain}:grass:${voxel}`, x, z);
           const offsetX = (this.random01(seed) - 0.5) * tileSize * 0.72;
           const offsetZ = (this.random01(seed + 19) - 0.5) * tileSize * 0.72;
-          const height = 0.08 + this.random01(seed + 41) * 0.16;
-          const width = 0.022 + this.random01(seed + 67) * 0.035;
-          const angle = this.random01(seed + 89) * Math.PI * 2;
-          const rightX = Math.cos(angle) * width;
-          const rightZ = Math.sin(angle) * width;
-          const baseX = center.x + offsetX;
-          const baseZ = center.z + offsetZ;
-          const lean = (this.random01(seed + 107) - 0.5) * 0.05;
-
-          this.pushTriangleBlade(
-            positions,
-            anchors,
-            sways,
-            new THREE.Vector3(baseX - rightX, center.y, baseZ - rightZ),
-            new THREE.Vector3(baseX + rightX, center.y, baseZ + rightZ),
-            new THREE.Vector3(baseX + lean, center.y + height, baseZ - lean * 0.65),
-            seed
-          );
-          bladeTotal += 1;
+          const width = 0.035 + this.random01(seed + 41) * 0.045;
+          const height = 0.03 + this.random01(seed + 67) * 0.065;
+          const depth = 0.035 + this.random01(seed + 89) * 0.045;
+          dummy.position.set(center.x + offsetX, center.y + height / 2, center.z + offsetZ);
+          dummy.rotation.set(0, this.random01(seed + 107) * Math.PI * 2, 0);
+          dummy.scale.set(width, height, depth);
+          dummy.updateMatrix();
+          matrices.push(dummy.matrix.clone());
+          colors.push(this.bladeColor(seed, "grass"));
         }
       }
     }
 
-    if (positions.length === 0) {
+    if (matrices.length === 0) {
       return;
     }
 
-    const mesh = new THREE.Mesh(this.createBladeGeometry(positions, anchors, sways), this.createSwayBladeMaterial("grass"));
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
+    const geometry = new THREE.BoxGeometry(1, 1, 1);
+    const colorBase = Array.from({ length: geometry.getAttribute("position").count * 3 }, () => 1);
+    geometry.setAttribute("color", new THREE.Float32BufferAttribute(colorBase, 3));
+    const material = new THREE.MeshBasicMaterial({
+      color: "#ffffff",
+      toneMapped: false,
+      vertexColors: true
+    });
+    const mesh = new THREE.InstancedMesh(geometry, material, matrices.length);
+    for (let index = 0; index < matrices.length; index += 1) {
+      mesh.setMatrixAt(index, matrices[index]);
+      mesh.setColorAt(index, colors[index]);
+    }
+    mesh.instanceMatrix.needsUpdate = true;
+    if (mesh.instanceColor) {
+      mesh.instanceColor.needsUpdate = true;
+    }
     this.root.add(mesh);
   }
 
@@ -774,11 +794,14 @@ export class LevelScene {
     positions: number[],
     anchors: number[],
     sways: number[],
+    colors: number[],
+    kind: "grass" | "seaweed",
     leftBase: THREE.Vector3,
     rightBase: THREE.Vector3,
     tip: THREE.Vector3,
     seed: number
   ): void {
+    const color = this.bladeColor(seed, kind);
     for (const [point, anchor] of [
       [leftBase, 0],
       [rightBase, 0],
@@ -787,6 +810,7 @@ export class LevelScene {
       positions.push(point.x, point.y, point.z);
       anchors.push(anchor);
       sways.push(this.random01(seed + positions.length) * Math.PI * 2);
+      colors.push(color.r, color.g, color.b);
     }
   }
 
@@ -794,22 +818,30 @@ export class LevelScene {
     positions: number[],
     anchors: number[],
     sways: number[],
+    colors: number[],
+    kind: "grass" | "seaweed",
     leftBase: THREE.Vector3,
     rightBase: THREE.Vector3,
     tip: THREE.Vector3,
     shoulder: THREE.Vector3,
     seed: number
   ): void {
-    this.pushTriangleBlade(positions, anchors, sways, leftBase, rightBase, tip, seed);
-    this.pushTriangleBlade(positions, anchors, sways, rightBase, shoulder, tip, seed + 11);
+    this.pushTriangleBlade(positions, anchors, sways, colors, kind, leftBase, rightBase, tip, seed);
+    this.pushTriangleBlade(positions, anchors, sways, colors, kind, rightBase, shoulder, tip, seed + 11);
   }
 
-  private createBladeGeometry(positions: number[], anchors: number[], sways: number[]): THREE.BufferGeometry {
+  private bladeColor(seed: number, kind: "grass" | "seaweed"): THREE.Color {
+    const base = kind === "grass" ? "#79b95a" : "#173f35";
+    const highlight = kind === "grass" ? "#b1dc70" : "#3f7654";
+    return new THREE.Color(base).lerp(new THREE.Color(highlight), this.random01(seed + 131) * 0.85);
+  }
+
+  private createBladeGeometry(positions: number[], anchors: number[], sways: number[], colors: number[]): THREE.BufferGeometry {
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
     geometry.setAttribute("aAnchor", new THREE.Float32BufferAttribute(anchors, 1));
     geometry.setAttribute("aSway", new THREE.Float32BufferAttribute(sways, 1));
-    geometry.computeVertexNormals();
+    geometry.setAttribute("aColor", new THREE.Float32BufferAttribute(colors, 3));
     return geometry;
   }
 
@@ -817,8 +849,6 @@ export class LevelScene {
     const material = new THREE.ShaderMaterial({
       uniforms: {
         uTime: { value: 0 },
-        uBaseColor: { value: new THREE.Color(kind === "grass" ? "#456f38" : "#173f35") },
-        uTipColor: { value: new THREE.Color(kind === "grass" ? "#9bc95d" : "#4f8b63") },
         uStrength: { value: kind === "grass" ? 0.035 : 0.025 },
         uSpeed: { value: kind === "grass" ? 1.2 : 0.55 },
         uOpacity: { value: kind === "grass" ? 1 : 0.74 }
@@ -829,26 +859,24 @@ export class LevelScene {
         uniform float uTime;
         uniform float uStrength;
         uniform float uSpeed;
-        varying float vAnchor;
+        attribute vec3 aColor;
+        varying vec3 vColor;
 
         void main() {
           vec3 transformed = position;
           float wave = sin(uTime * uSpeed + aSway + position.x * 0.53 + position.z * 0.31);
           transformed.x += wave * uStrength * aAnchor;
           transformed.z += cos(uTime * uSpeed * 0.7 + aSway) * uStrength * 0.45 * aAnchor;
-          vAnchor = aAnchor;
+          vColor = aColor;
           gl_Position = projectionMatrix * modelViewMatrix * vec4(transformed, 1.0);
         }
       `,
       fragmentShader: `
-        uniform vec3 uBaseColor;
-        uniform vec3 uTipColor;
         uniform float uOpacity;
-        varying float vAnchor;
+        varying vec3 vColor;
 
         void main() {
-          vec3 color = mix(uBaseColor, uTipColor, smoothstep(0.0, 1.0, vAnchor));
-          gl_FragColor = vec4(color, uOpacity);
+          gl_FragColor = vec4(vColor, uOpacity);
         }
       `,
       transparent: kind === "seaweed",
@@ -889,6 +917,10 @@ export class LevelScene {
 
   private tileHasObstacle(level: LevelData, x: number, z: number): boolean {
     return level.obstacles.some((obstacle) => obstacle.x === x && obstacle.z === z);
+  }
+
+  private tileHasUnit(level: LevelData, x: number, z: number): boolean {
+    return level.units.some((unit) => unit.x === x && unit.z === z);
   }
 
   private random01(seed: number): number {

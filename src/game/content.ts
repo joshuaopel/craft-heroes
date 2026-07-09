@@ -133,7 +133,7 @@ export const defaultEnvironmentMaterials: EnvironmentMaterialDefinition[] = [
     id: "grass",
     name: "Grass",
     surfaceEffect: "grass",
-    grassDensity: 7,
+    grassDensity: 4,
     topColor: "#8fc265",
     sideColor: "#5c6f48",
     sideCapColor: "#6f8f45",
