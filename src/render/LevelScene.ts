@@ -52,6 +52,9 @@ const fallbackMaterial: EnvironmentMaterialDefinition = {
   name: "Grass",
   surfaceEffect: "grass",
   grassDensity: 6,
+  grassHeightMin: 0.03,
+  grassHeightMax: 0.095,
+  grassColors: ["#79b95a", "#94c866", "#b1dc70"],
   topColor: "#8fc265",
   sideColor: "#5c6f48",
   sideCapColor: "#6f8f45",
@@ -74,6 +77,11 @@ const fallbackProp: PropDefinition = {
   role: "blocker",
   assetKind: "box",
   windEffect: false,
+  emitsLight: false,
+  lightColor: "#ffb85c",
+  lightIntensity: 1.4,
+  lightRange: 4,
+  lightOffsetY: 0.72,
   color: "#6c716a",
   textureUrl: "",
   modelUrl: "",
@@ -748,20 +756,23 @@ export class LevelScene {
         }
 
         const voxelCount = Math.min(Math.max(0, Math.round(grassDensity * 0.65)), maxGrassVoxels - matrices.length);
+        const minHeight = Math.max(0.01, Math.min(0.3, material.grassHeightMin ?? fallbackMaterial.grassHeightMin));
+        const maxHeight = Math.max(minHeight, Math.min(0.35, material.grassHeightMax ?? fallbackMaterial.grassHeightMax));
+        const palette = this.grassPaletteFor(material);
         const center = this.worldPosition(level, x, z, this.tileTopY(level, x, z) + 0.012);
         for (let voxel = 0; voxel < voxelCount; voxel += 1) {
           const seed = this.hashTile(`${tile.terrain}:grass:${voxel}`, x, z);
           const offsetX = (this.random01(seed) - 0.5) * tileSize * 0.72;
           const offsetZ = (this.random01(seed + 19) - 0.5) * tileSize * 0.72;
           const width = 0.035 + this.random01(seed + 41) * 0.045;
-          const height = 0.03 + this.random01(seed + 67) * 0.065;
+          const height = minHeight + this.random01(seed + 67) * (maxHeight - minHeight);
           const depth = 0.035 + this.random01(seed + 89) * 0.045;
           dummy.position.set(center.x + offsetX, center.y + height / 2, center.z + offsetZ);
           dummy.rotation.set(0, this.random01(seed + 107) * Math.PI * 2, 0);
           dummy.scale.set(width, height, depth);
           dummy.updateMatrix();
           matrices.push(dummy.matrix.clone());
-          colors.push(this.bladeColor(seed, "grass"));
+          colors.push(this.pickGrassColor(seed, palette));
         }
       }
     }
@@ -831,9 +842,19 @@ export class LevelScene {
   }
 
   private bladeColor(seed: number, kind: "grass" | "seaweed"): THREE.Color {
-    const base = kind === "grass" ? "#79b95a" : "#173f35";
-    const highlight = kind === "grass" ? "#b1dc70" : "#3f7654";
+    const base = kind === "grass" ? fallbackMaterial.grassColors[0] : "#173f35";
+    const highlight = kind === "grass" ? fallbackMaterial.grassColors[2] : "#3f7654";
     return new THREE.Color(base).lerp(new THREE.Color(highlight), this.random01(seed + 131) * 0.85);
+  }
+
+  private grassPaletteFor(material: Partial<EnvironmentMaterialDefinition>): THREE.Color[] {
+    const colors = Array.isArray(material.grassColors) && material.grassColors.length > 0 ? material.grassColors : fallbackMaterial.grassColors;
+    return colors.slice(0, 6).map((color) => new THREE.Color(color));
+  }
+
+  private pickGrassColor(seed: number, palette: THREE.Color[]): THREE.Color {
+    const base = palette[this.hashTile("grass-color", seed, palette.length) % palette.length] ?? new THREE.Color(fallbackMaterial.grassColors[0]);
+    return base.clone().lerp(new THREE.Color("#ffffff"), this.random01(seed + 151) * 0.08);
   }
 
   private createBladeGeometry(positions: number[], anchors: number[], sways: number[], colors: number[]): THREE.BufferGeometry {
@@ -961,6 +982,7 @@ export class LevelScene {
     const baseY = this.tileTopY(level, obstacle.x, obstacle.z);
     const group = this.createPropObject(obstacle.type, 1, true);
     group.position.copy(this.worldPosition(level, obstacle.x, obstacle.z, baseY));
+    group.rotation.y = obstacle.rotation ?? 0;
     group.userData = { ...group.userData, x: obstacle.x, z: obstacle.z, windSeed: this.hashTile(`prop:${obstacle.type}`, obstacle.x, obstacle.z) };
     group.traverse((child) => {
       child.userData = { ...child.userData, x: obstacle.x, z: obstacle.z };
@@ -1007,6 +1029,8 @@ export class LevelScene {
     proxy.userData = { propId: definition.id, height, clickProxy: includeClickProxy };
     group.add(proxy);
 
+    this.addPropLight(group, definition, resolvedScale, height);
+
     if (definition.assetKind === "glb" && definition.modelUrl) {
       void this.loadPropModel(definition).then((source) => {
         if (!group.parent) {
@@ -1020,6 +1044,30 @@ export class LevelScene {
       });
     }
     return group;
+  }
+
+  private addPropLight(group: THREE.Group, definition: PropDefinition, scale: number, propHeight: number): void {
+    if (!definition.emitsLight || definition.lightIntensity <= 0) {
+      return;
+    }
+    const color = new THREE.Color(definition.lightColor || "#ffb85c");
+    const y = Math.max(0.02, Math.min(propHeight + 1.4, (definition.lightOffsetY || propHeight) * scale));
+    const light = new THREE.PointLight(color, definition.lightIntensity, definition.lightRange, 1.65);
+    light.position.y = y;
+    group.add(light);
+
+    const glow = new THREE.Mesh(
+      new THREE.SphereGeometry(0.06 * Math.max(0.75, scale), 10, 8),
+      new THREE.MeshBasicMaterial({
+        color,
+        transparent: true,
+        opacity: 0.82,
+        toneMapped: false
+      })
+    );
+    glow.position.y = y;
+    glow.renderOrder = 6;
+    group.add(glow);
   }
 
   private shouldPropSway(definition: PropDefinition): boolean {

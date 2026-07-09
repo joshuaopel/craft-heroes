@@ -76,7 +76,12 @@ function normalizeLevel(level: LevelData): LevelData {
         ...(level.environment?.backgroundModel ?? {})
       }
     },
-    obstacles: Array.isArray(level.obstacles) ? level.obstacles : [],
+    obstacles: Array.isArray(level.obstacles)
+      ? level.obstacles.map((obstacle) => ({
+          ...obstacle,
+          rotation: Number.isFinite(obstacle.rotation) ? obstacle.rotation : 0
+        }))
+      : [],
     surroundings: Array.isArray(level.surroundings) ? level.surroundings : [],
     units: Array.isArray(level.units) ? level.units : [],
     objectives: Array.isArray(level.objectives) ? level.objectives : [],

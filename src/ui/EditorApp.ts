@@ -139,6 +139,23 @@ function normalizeSurfaceEffect(value: unknown): EnvironmentSurfaceEffect {
   return value === "grass" || value === "water" || value === "solid" ? value : "solid";
 }
 
+function isHexColor(value: unknown): value is string {
+  return typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value);
+}
+
+function normalizeGrassColors(value: unknown, fallback: string[]): string[] {
+  const colors = Array.isArray(value) ? value.filter(isHexColor) : [];
+  const merged = [...colors, ...fallback.filter(isHexColor), "#79b95a", "#94c866", "#b1dc70"];
+  return merged.slice(0, 3);
+}
+
+function normalizeQuarterTurn(value: unknown): number {
+  const angle = numberOrFallback(value, 0);
+  const quarterTurn = Math.PI / 2;
+  const normalizedSteps = ((Math.round(angle / quarterTurn) % 4) + 4) % 4;
+  return normalizedSteps * quarterTurn;
+}
+
 function normalizeClassDefinition(classDefinition: ClassDefinition): ClassDefinition {
   const fallback = defaultClassDefinitions[0];
   const id = classDefinition.id || classIdFromName(classDefinition.name || "class");
@@ -198,6 +215,9 @@ function normalizeMaterialDefinition(material: Partial<EnvironmentMaterialDefini
     name: material.name || id,
     surfaceEffect: normalizeSurfaceEffect(material.surfaceEffect ?? fallback.surfaceEffect),
     grassDensity: Math.max(0, Math.min(30, numberOrFallback(material.grassDensity, fallback.grassDensity ?? 0))),
+    grassHeightMin: Math.max(0.01, Math.min(0.3, numberOrFallback(material.grassHeightMin, fallback.grassHeightMin ?? 0.03))),
+    grassHeightMax: Math.max(0.01, Math.min(0.35, numberOrFallback(material.grassHeightMax, fallback.grassHeightMax ?? 0.095))),
+    grassColors: normalizeGrassColors(material.grassColors, fallback.grassColors ?? []),
     topColor: material.topColor || fallback.topColor,
     sideColor: material.sideColor || fallback.sideColor,
     sideCapColor: material.sideCapColor || material.sideColor || fallback.sideCapColor,
@@ -236,6 +256,11 @@ function normalizePropDefinition(prop: Partial<PropDefinition>): PropDefinition 
     role,
     assetKind: prop.assetKind === "glb" ? "glb" : "box",
     windEffect: Boolean(prop.windEffect ?? fallback.windEffect),
+    emitsLight: Boolean(prop.emitsLight ?? fallback.emitsLight),
+    lightColor: isHexColor(prop.lightColor) ? prop.lightColor : fallback.lightColor || "#ffb85c",
+    lightIntensity: Math.max(0, Math.min(8, numberOrFallback(prop.lightIntensity, fallback.lightIntensity ?? 1.4))),
+    lightRange: Math.max(0.5, Math.min(16, numberOrFallback(prop.lightRange, fallback.lightRange ?? 4))),
+    lightOffsetY: Math.max(0, Math.min(5, numberOrFallback(prop.lightOffsetY, fallback.lightOffsetY ?? fallback.height))),
     color: prop.color || fallback.color,
     textureUrl: typeof prop.textureUrl === "string" ? prop.textureUrl : "",
     modelUrl: typeof prop.modelUrl === "string" ? prop.modelUrl : "",
@@ -266,6 +291,12 @@ function normalizeLevelData(level: LevelData): LevelData {
   return {
     ...level,
     environment: normalizeEnvironment(level.environment),
+    obstacles: Array.isArray(level.obstacles)
+      ? level.obstacles.map((obstacle) => ({
+          ...obstacle,
+          rotation: normalizeQuarterTurn(obstacle.rotation)
+        }))
+      : [],
     surroundings: Array.isArray(level.surroundings) ? level.surroundings : [],
     story: Array.isArray(level.story) ? level.story : []
   };
@@ -319,6 +350,7 @@ interface EditorState {
   templateId: string;
   classId: ClassId;
   levelId: string;
+  propRotationSteps: number;
   selected?: TileCoord;
 }
 
@@ -341,7 +373,8 @@ export class EditorApp {
     team: "enemy",
     templateId: this.templates[1]?.id ?? this.templates[0].id,
     classId: this.classDefinitions[0].id,
-    levelId: defaultCampaign.startLevel
+    levelId: defaultCampaign.startLevel,
+    propRotationSteps: 0
   };
 
   constructor(root: HTMLElement) {
@@ -382,6 +415,14 @@ export class EditorApp {
 
   private selectedProp(): PropDefinition {
     return this.propDefinitions.find((prop) => prop.id === this.state.obstacle) ?? this.propDefinitions[0];
+  }
+
+  private propRotationAngle(): number {
+    return this.state.propRotationSteps * (Math.PI / 2);
+  }
+
+  private propRotationLabel(): string {
+    return `${this.state.propRotationSteps * 90} deg`;
   }
 
   private uniqueTemplateId(name: string): string {
@@ -505,6 +546,9 @@ export class EditorApp {
     const sideHalfColorInput = this.panel.querySelector<HTMLInputElement>("[data-material='sideHalfColor']");
     const surfaceEffectInput = this.panel.querySelector<HTMLSelectElement>("[data-material='surfaceEffect']");
     const grassDensityInput = this.panel.querySelector<HTMLInputElement>("[data-material='grassDensity']");
+    const grassHeightMinInput = this.panel.querySelector<HTMLInputElement>("[data-material='grassHeightMin']");
+    const grassHeightMaxInput = this.panel.querySelector<HTMLInputElement>("[data-material='grassHeightMax']");
+    const grassColorInputs = [...this.panel.querySelectorAll<HTMLInputElement>("[data-material-grass-color]")];
     const movementInput = this.panel.querySelector<HTMLInputElement>("[data-material='movementCost']");
     const lineOfSightInput = this.panel.querySelector<HTMLInputElement>("[data-material='blocksLineOfSight']");
     const topRuleInput = this.panel.querySelector<HTMLInputElement>("[data-material='topRule']");
@@ -520,6 +564,9 @@ export class EditorApp {
       sideHalfColor: sideHalfColorInput?.value || fallback.sideHalfColor,
       surfaceEffect: normalizeSurfaceEffect(surfaceEffectInput?.value ?? fallback.surfaceEffect),
       grassDensity: numberOrFallback(grassDensityInput?.value, fallback.grassDensity),
+      grassHeightMin: numberOrFallback(grassHeightMinInput?.value, fallback.grassHeightMin),
+      grassHeightMax: numberOrFallback(grassHeightMaxInput?.value, fallback.grassHeightMax),
+      grassColors: normalizeGrassColors(grassColorInputs.map((input) => input.value), fallback.grassColors),
       topRule: topRuleInput?.value.trim() || fallback.topRule,
       sideRule: sideRuleInput?.value.trim() || fallback.sideRule,
       movementCost: numberOrFallback(movementInput?.value, fallback.movementCost),
@@ -546,6 +593,11 @@ export class EditorApp {
     const coverBonusInput = this.panel.querySelector<HTMLInputElement>("[data-prop='coverBonus']");
     const fitModelInput = this.panel.querySelector<HTMLInputElement>("[data-prop='fitModelToTile']");
     const windEffectInput = this.panel.querySelector<HTMLInputElement>("[data-prop='windEffect']");
+    const emitsLightInput = this.panel.querySelector<HTMLInputElement>("[data-prop='emitsLight']");
+    const lightColorInput = this.panel.querySelector<HTMLInputElement>("[data-prop='lightColor']");
+    const lightIntensityInput = this.panel.querySelector<HTMLInputElement>("[data-prop='lightIntensity']");
+    const lightRangeInput = this.panel.querySelector<HTMLInputElement>("[data-prop='lightRange']");
+    const lightOffsetYInput = this.panel.querySelector<HTMLInputElement>("[data-prop='lightOffsetY']");
     const notesInput = this.panel.querySelector<HTMLInputElement>("[data-prop='notes']");
     return normalizePropDefinition({
       ...fallback,
@@ -562,6 +614,11 @@ export class EditorApp {
       coverBonus: numberOrFallback(coverBonusInput?.value, fallback.coverBonus),
       fitModelToTile: fitModelInput?.checked ?? fallback.fitModelToTile,
       windEffect: windEffectInput?.checked ?? fallback.windEffect,
+      emitsLight: emitsLightInput?.checked ?? fallback.emitsLight,
+      lightColor: lightColorInput?.value || fallback.lightColor,
+      lightIntensity: numberOrFallback(lightIntensityInput?.value, fallback.lightIntensity),
+      lightRange: numberOrFallback(lightRangeInput?.value, fallback.lightRange),
+      lightOffsetY: numberOrFallback(lightOffsetYInput?.value, fallback.lightOffsetY),
       notes: textToConditions(notesInput?.value ?? conditionsToText(fallback.notes))
     });
   }
@@ -638,6 +695,40 @@ export class EditorApp {
     this.updatePanel();
   }
 
+  private applyPropRotation(steps: number): void {
+    this.state.propRotationSteps = ((steps % 4) + 4) % 4;
+    const level = this.currentLevel();
+    if (!this.state.selected) {
+      this.updatePanel();
+      this.flash(`Prop rotation set to ${this.propRotationLabel()}.`);
+      return;
+    }
+
+    let rotated = false;
+    const next = {
+      ...level,
+      obstacles: level.obstacles.map((obstacle) => {
+        if (obstacle.x !== this.state.selected?.x || obstacle.z !== this.state.selected.z) {
+          return obstacle;
+        }
+        rotated = true;
+        return {
+          ...obstacle,
+          rotation: this.propRotationAngle()
+        };
+      })
+    };
+    if (rotated) {
+      this.setCurrentLevel(next);
+      this.scene.setLevel(next);
+      this.scene.setSelected(this.state.selected);
+      this.flash(`Rotated selected prop to ${this.propRotationLabel()}.`);
+    } else {
+      this.flash(`Prop rotation set to ${this.propRotationLabel()}.`);
+    }
+    this.updatePanel();
+  }
+
   private handleTileClick(coord: TileCoord): void {
     this.state.selected = coord;
     if (this.state.mode === "play") {
@@ -655,7 +746,7 @@ export class EditorApp {
     } else if (this.state.tool === "paint") {
       next = paintTerrain(level, coord, this.state.terrain);
     } else if (this.state.tool === "obstacle") {
-      next = placeObstacle(level, coord, this.state.obstacle);
+      next = placeObstacle(level, coord, this.state.obstacle, this.propRotationAngle());
     } else if (this.state.tool === "unit") {
       const template = this.selectedTemplate();
       next = placeUnit(level, coord, this.state.team, template);
@@ -682,6 +773,9 @@ export class EditorApp {
     const currentClass = this.selectedClass();
     const currentMaterial = this.selectedMaterial();
     const currentProp = this.selectedProp();
+    const selectedObstacle = this.state.selected
+      ? level.obstacles.find((obstacle) => obstacle.x === this.state.selected?.x && obstacle.z === this.state.selected?.z)
+      : undefined;
     const json = JSON.stringify(
       {
         campaign: this.campaign,
@@ -767,6 +861,20 @@ export class EditorApp {
           </select>
         </label>
       </div>
+      <section class="control-section">
+        <div class="section-title">
+          <strong>Prop Placement</strong>
+          <span>${selectedObstacle ? `Selected ${escapeHtml(selectedObstacle.type)} @ ${selectedObstacle.x}, ${selectedObstacle.z}` : "Set rotation before placing GLB props or blockers."}</span>
+        </div>
+        <div class="button-row two">
+          <button data-action="rotate-prop">Rotate 90</button>
+          <button data-action="reset-prop-rotation">Reset Rotation</button>
+        </div>
+        <div class="level-card">
+          <strong>${this.propRotationLabel()}</strong>
+          <span>${selectedObstacle ? "Rotates the selected prop and future placements." : "Applies to future prop placements."}</span>
+        </div>
+      </section>
 
       <section class="control-section">
         <div class="section-title">
@@ -949,6 +1057,14 @@ export class EditorApp {
             <input data-material="grassDensity" type="number" min="0" max="30" step="1" value="${currentMaterial.grassDensity}">
           </label>
           <label class="field">
+            <span>Grass Min Height</span>
+            <input data-material="grassHeightMin" type="number" min="0.01" max="0.3" step="0.01" value="${currentMaterial.grassHeightMin}">
+          </label>
+          <label class="field">
+            <span>Grass Max Height</span>
+            <input data-material="grassHeightMax" type="number" min="0.01" max="0.35" step="0.01" value="${currentMaterial.grassHeightMax}">
+          </label>
+          <label class="field">
             <span>Top Color</span>
             <input data-material="topColor" type="color" value="${escapeHtml(currentMaterial.topColor)}">
           </label>
@@ -956,6 +1072,18 @@ export class EditorApp {
             <span>Legacy Side</span>
             <input data-material="sideColor" type="color" value="${escapeHtml(currentMaterial.sideColor)}">
           </label>
+        </div>
+        <div class="compact-grid">
+          ${currentMaterial.grassColors
+            .map(
+              (color, index) => `
+                <label class="field">
+                  <span>Grass Color ${index + 1}</span>
+                  <input data-material-grass-color type="color" value="${escapeHtml(color)}">
+                </label>
+              `
+            )
+            .join("")}
         </div>
         <div class="asset-pair">
           <div class="asset-preview-head">
@@ -1108,6 +1236,28 @@ export class EditorApp {
           <input data-prop="windEffect" type="checkbox" ${currentProp.windEffect ? "checked" : ""}>
           <span>Apply a subtle wind sway to foliage-style props.</span>
         </label>
+        <label class="check-row">
+          <input data-prop="emitsLight" type="checkbox" ${currentProp.emitsLight ? "checked" : ""}>
+          <span>Emit light from this prop or uploaded GLB.</span>
+        </label>
+        <div class="compact-grid">
+          <label class="field">
+            <span>Light Color</span>
+            <input data-prop="lightColor" type="color" value="${escapeHtml(currentProp.lightColor)}">
+          </label>
+          <label class="field">
+            <span>Intensity</span>
+            <input data-prop="lightIntensity" type="number" min="0" max="8" step="0.05" value="${currentProp.lightIntensity}">
+          </label>
+          <label class="field">
+            <span>Range</span>
+            <input data-prop="lightRange" type="number" min="0.5" max="16" step="0.1" value="${currentProp.lightRange}">
+          </label>
+          <label class="field">
+            <span>Light Height</span>
+            <input data-prop="lightOffsetY" type="number" min="0" max="5" step="0.05" value="${currentProp.lightOffsetY}">
+          </label>
+        </div>
         <label class="field">
           <span>Notes</span>
           <input data-prop="notes" type="text" value="${escapeHtml(conditionsToText(currentProp.notes))}">
@@ -1496,6 +1646,15 @@ export class EditorApp {
     } else if (action === "frame-board") {
       this.scene.frameCurrentLevel();
       this.flash("Camera framed to the current board.");
+    } else if (action === "rotate-prop") {
+      const level = this.currentLevel();
+      const selectedObstacle = this.state.selected
+        ? level.obstacles.find((obstacle) => obstacle.x === this.state.selected?.x && obstacle.z === this.state.selected.z)
+        : undefined;
+      const currentSteps = selectedObstacle ? Math.round((selectedObstacle.rotation ?? 0) / (Math.PI / 2)) : this.state.propRotationSteps;
+      this.applyPropRotation(currentSteps + 1);
+    } else if (action === "reset-prop-rotation") {
+      this.applyPropRotation(0);
     } else if (action === "update-build") {
       const draft = this.readBuildDraft();
       this.templates = this.templates.map((template) => (template.id === draft.id ? draft : template));
@@ -1692,6 +1851,7 @@ export class EditorApp {
       this.state.classId = this.classDefinitions[0].id;
       this.state.terrain = this.environmentMaterials[0].id;
       this.state.obstacle = this.propDefinitions[0].id;
+      this.state.propRotationSteps = 0;
       this.state.selected = undefined;
       this.scene.setClassDefinitions(this.classDefinitions);
       this.scene.setEnvironmentMaterials(this.environmentMaterials);

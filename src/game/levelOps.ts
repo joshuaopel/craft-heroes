@@ -63,14 +63,15 @@ export function resizeLevel(level: LevelData, width: number, depth: number, terr
   return next;
 }
 
-export function placeObstacle(level: LevelData, coord: TileCoord, type: ObstacleType): LevelData {
+export function placeObstacle(level: LevelData, coord: TileCoord, type: ObstacleType, rotation = 0): LevelData {
   const next = cloneLevel(level);
   next.obstacles = next.obstacles.filter((obstacle) => obstacle.x !== coord.x || obstacle.z !== coord.z);
   next.obstacles.push({
     id: `obs-${type}-${Date.now()}`,
     type,
     x: coord.x,
-    z: coord.z
+    z: coord.z,
+    rotation
   });
   return next;
 }

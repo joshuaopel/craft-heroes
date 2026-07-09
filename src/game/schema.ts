@@ -34,6 +34,9 @@ export interface EnvironmentMaterialDefinition {
   name: string;
   surfaceEffect: EnvironmentSurfaceEffect;
   grassDensity: number;
+  grassHeightMin: number;
+  grassHeightMax: number;
+  grassColors: string[];
   topColor: string;
   sideColor: string;
   sideCapColor: string;
@@ -56,6 +59,11 @@ export interface PropDefinition {
   role: "blocker" | "cover" | "decor";
   assetKind: "box" | "glb";
   windEffect: boolean;
+  emitsLight: boolean;
+  lightColor: string;
+  lightIntensity: number;
+  lightRange: number;
+  lightOffsetY: number;
   color: string;
   textureUrl: string;
   modelUrl: string;
@@ -99,6 +107,7 @@ export interface ObstacleData {
   type: PropDefinitionId;
   x: number;
   z: number;
+  rotation: number;
 }
 
 export interface SurroundingPropData {
