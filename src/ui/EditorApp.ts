@@ -27,6 +27,7 @@ import type {
   EditorTool,
   EnvironmentMaterialDefinition,
   EnvironmentMaterialId,
+  EnvironmentSurfaceEffect,
   EnvironmentSettings,
   LevelData,
   ObstacleType,
@@ -134,6 +135,10 @@ function normalizeStats(stats: Partial<ClassSectionStats> | undefined): ClassSec
   };
 }
 
+function normalizeSurfaceEffect(value: unknown): EnvironmentSurfaceEffect {
+  return value === "grass" || value === "water" || value === "solid" ? value : "solid";
+}
+
 function normalizeClassDefinition(classDefinition: ClassDefinition): ClassDefinition {
   const fallback = defaultClassDefinitions[0];
   const id = classDefinition.id || classIdFromName(classDefinition.name || "class");
@@ -191,6 +196,8 @@ function normalizeMaterialDefinition(material: Partial<EnvironmentMaterialDefini
   return {
     id,
     name: material.name || id,
+    surfaceEffect: normalizeSurfaceEffect(material.surfaceEffect ?? fallback.surfaceEffect),
+    grassDensity: Math.max(0, Math.min(30, numberOrFallback(material.grassDensity, fallback.grassDensity ?? 0))),
     topColor: material.topColor || fallback.topColor,
     sideColor: material.sideColor || fallback.sideColor,
     sideCapColor: material.sideCapColor || material.sideColor || fallback.sideCapColor,
@@ -228,6 +235,7 @@ function normalizePropDefinition(prop: Partial<PropDefinition>): PropDefinition 
     name: prop.name || id,
     role,
     assetKind: prop.assetKind === "glb" ? "glb" : "box",
+    windEffect: Boolean(prop.windEffect ?? fallback.windEffect),
     color: prop.color || fallback.color,
     textureUrl: typeof prop.textureUrl === "string" ? prop.textureUrl : "",
     modelUrl: typeof prop.modelUrl === "string" ? prop.modelUrl : "",
@@ -495,6 +503,8 @@ export class EditorApp {
     const sideCapColorInput = this.panel.querySelector<HTMLInputElement>("[data-material='sideCapColor']");
     const sideFullColorInput = this.panel.querySelector<HTMLInputElement>("[data-material='sideFullColor']");
     const sideHalfColorInput = this.panel.querySelector<HTMLInputElement>("[data-material='sideHalfColor']");
+    const surfaceEffectInput = this.panel.querySelector<HTMLSelectElement>("[data-material='surfaceEffect']");
+    const grassDensityInput = this.panel.querySelector<HTMLInputElement>("[data-material='grassDensity']");
     const movementInput = this.panel.querySelector<HTMLInputElement>("[data-material='movementCost']");
     const lineOfSightInput = this.panel.querySelector<HTMLInputElement>("[data-material='blocksLineOfSight']");
     const topRuleInput = this.panel.querySelector<HTMLInputElement>("[data-material='topRule']");
@@ -508,6 +518,8 @@ export class EditorApp {
       sideCapColor: sideCapColorInput?.value || fallback.sideCapColor,
       sideFullColor: sideFullColorInput?.value || fallback.sideFullColor,
       sideHalfColor: sideHalfColorInput?.value || fallback.sideHalfColor,
+      surfaceEffect: normalizeSurfaceEffect(surfaceEffectInput?.value ?? fallback.surfaceEffect),
+      grassDensity: numberOrFallback(grassDensityInput?.value, fallback.grassDensity),
       topRule: topRuleInput?.value.trim() || fallback.topRule,
       sideRule: sideRuleInput?.value.trim() || fallback.sideRule,
       movementCost: numberOrFallback(movementInput?.value, fallback.movementCost),
@@ -533,6 +545,7 @@ export class EditorApp {
     const blocksLineOfSightInput = this.panel.querySelector<HTMLInputElement>("[data-prop='blocksLineOfSight']");
     const coverBonusInput = this.panel.querySelector<HTMLInputElement>("[data-prop='coverBonus']");
     const fitModelInput = this.panel.querySelector<HTMLInputElement>("[data-prop='fitModelToTile']");
+    const windEffectInput = this.panel.querySelector<HTMLInputElement>("[data-prop='windEffect']");
     const notesInput = this.panel.querySelector<HTMLInputElement>("[data-prop='notes']");
     return normalizePropDefinition({
       ...fallback,
@@ -548,6 +561,7 @@ export class EditorApp {
       blocksLineOfSight: Boolean(blocksLineOfSightInput?.checked),
       coverBonus: numberOrFallback(coverBonusInput?.value, fallback.coverBonus),
       fitModelToTile: fitModelInput?.checked ?? fallback.fitModelToTile,
+      windEffect: windEffectInput?.checked ?? fallback.windEffect,
       notes: textToConditions(notesInput?.value ?? conditionsToText(fallback.notes))
     });
   }
@@ -923,6 +937,18 @@ export class EditorApp {
             <input data-material="movementCost" type="number" min="1" max="9" step="1" value="${currentMaterial.movementCost}">
           </label>
           <label class="field">
+            <span>Surface Effect</span>
+            <select data-material="surfaceEffect">
+              ${(["solid", "grass", "water"] as EnvironmentSurfaceEffect[])
+                .map((effect) => `<option value="${effect}" ${currentMaterial.surfaceEffect === effect ? "selected" : ""}>${effect}</option>`)
+                .join("")}
+            </select>
+          </label>
+          <label class="field">
+            <span>Grass Density</span>
+            <input data-material="grassDensity" type="number" min="0" max="30" step="1" value="${currentMaterial.grassDensity}">
+          </label>
+          <label class="field">
             <span>Top Color</span>
             <input data-material="topColor" type="color" value="${escapeHtml(currentMaterial.topColor)}">
           </label>
@@ -1077,6 +1103,10 @@ export class EditorApp {
         <label class="check-row">
           <input data-prop="fitModelToTile" type="checkbox" ${currentProp.fitModelToTile ? "checked" : ""}>
           <span>Fit uploaded GLB to this prop's one-square footprint.</span>
+        </label>
+        <label class="check-row">
+          <input data-prop="windEffect" type="checkbox" ${currentProp.windEffect ? "checked" : ""}>
+          <span>Apply a subtle wind sway to foliage-style props.</span>
         </label>
         <label class="field">
           <span>Notes</span>

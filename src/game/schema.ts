@@ -6,6 +6,7 @@ export type ClassName = ClassId;
 export type SectionName = "head" | "body" | "legs";
 export type EnvironmentMaterialId = string;
 export type PropDefinitionId = string;
+export type EnvironmentSurfaceEffect = "solid" | "grass" | "water";
 
 export interface ClassSectionStats {
   attack: number;
@@ -31,6 +32,8 @@ export interface ClassDefinition {
 export interface EnvironmentMaterialDefinition {
   id: EnvironmentMaterialId;
   name: string;
+  surfaceEffect: EnvironmentSurfaceEffect;
+  grassDensity: number;
   topColor: string;
   sideColor: string;
   sideCapColor: string;
@@ -52,6 +55,7 @@ export interface PropDefinition {
   name: string;
   role: "blocker" | "cover" | "decor";
   assetKind: "box" | "glb";
+  windEffect: boolean;
   color: string;
   textureUrl: string;
   modelUrl: string;

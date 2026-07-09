@@ -5,6 +5,7 @@ import type {
   ClassDefinition,
   ClassId,
   EnvironmentMaterialDefinition,
+  EnvironmentSurfaceEffect,
   EnvironmentSettings,
   LevelData,
   ObstacleData,
@@ -19,6 +20,7 @@ import type {
 const tileSize = 1.08;
 const heightStep = 0.28;
 const baseTileHeight = 0.18;
+const maxGrassBlades = 2600;
 const sectionNames: SectionName[] = ["head", "body", "legs"];
 const dirOrder = ["S", "E", "N", "W"];
 
@@ -48,6 +50,8 @@ const fallbackEnvironment: EnvironmentSettings = {
 const fallbackMaterial: EnvironmentMaterialDefinition = {
   id: "grass",
   name: "Grass",
+  surfaceEffect: "grass",
+  grassDensity: 6,
   topColor: "#8fc265",
   sideColor: "#5c6f48",
   sideCapColor: "#6f8f45",
@@ -69,6 +73,7 @@ const fallbackProp: PropDefinition = {
   name: "Wall",
   role: "blocker",
   assetKind: "box",
+  windEffect: false,
   color: "#6c716a",
   textureUrl: "",
   modelUrl: "",
@@ -88,7 +93,7 @@ type SetLevelOptions = {
   frame?: boolean;
 };
 type TerrainMaterialSet = {
-  top: THREE.MeshStandardMaterial;
+  top: THREE.Material;
   sideCap: THREE.MeshStandardMaterial;
   sideFull: THREE.MeshStandardMaterial;
   sideHalf: THREE.MeshStandardMaterial;
@@ -107,9 +112,13 @@ export class LevelScene {
   private readonly raycaster = new THREE.Raycaster();
   private readonly pointer = new THREE.Vector2();
   private readonly clickable: THREE.Object3D[] = [];
+  private readonly clock = new THREE.Clock();
   private readonly textureLoader = new THREE.TextureLoader();
   private readonly gltfLoader = new GLTFLoader();
   private readonly glbCache = new Map<string, Promise<THREE.Group>>();
+  private readonly waterMaterials = new Set<THREE.ShaderMaterial>();
+  private readonly windMaterials = new Set<THREE.ShaderMaterial>();
+  private readonly windObjects = new Set<THREE.Object3D>();
   private classDefinitions: ClassDefinition[] = [];
   private environmentMaterials: EnvironmentMaterialDefinition[] = [];
   private propDefinitions: PropDefinition[] = [];
@@ -119,7 +128,7 @@ export class LevelScene {
     legs: {}
   };
   private terrainMaterials: Record<string, TerrainMaterialSet> = {};
-  private propMaterials: Record<PropDefinitionId, THREE.MeshStandardMaterial> = {};
+  private propMaterials: Record<PropDefinitionId, THREE.Material> = {};
   private level?: LevelData;
   private selected?: TileCoord;
   private mode: "editor" | "play" = "editor";
@@ -250,8 +259,12 @@ export class LevelScene {
   private createTerrainMaterials(environmentMaterials: EnvironmentMaterialDefinition[]): Record<string, TerrainMaterialSet> {
     const materials: Record<string, TerrainMaterialSet> = {};
     for (const definition of environmentMaterials) {
+      const surfaceEffect = this.resolveSurfaceEffect(definition);
       materials[definition.id] = {
-        top: this.createMappedMaterial(definition.topColor, definition.topImageUrl, 0.72),
+        top:
+          surfaceEffect === "water"
+            ? this.createWaterMaterial(definition)
+            : this.createMappedMaterial(definition.topColor, definition.topImageUrl, 0.72),
         sideCap: this.createMappedMaterial(definition.sideCapColor || definition.sideColor, definition.sideCapImageUrl || definition.sideImageUrl, 0.86),
         sideFull: this.createMappedMaterial(definition.sideFullColor || definition.sideColor, definition.sideFullImageUrl || definition.sideImageUrl, 0.88),
         sideHalf: this.createMappedMaterial(definition.sideHalfColor || definition.sideColor, definition.sideHalfImageUrl || definition.sideImageUrl, 0.9)
@@ -260,12 +273,69 @@ export class LevelScene {
     return materials;
   }
 
-  private createPropMaterials(propDefinitions: PropDefinition[]): Record<PropDefinitionId, THREE.MeshStandardMaterial> {
-    const materials: Record<PropDefinitionId, THREE.MeshStandardMaterial> = {};
+  private createPropMaterials(propDefinitions: PropDefinition[]): Record<PropDefinitionId, THREE.Material> {
+    const materials: Record<PropDefinitionId, THREE.Material> = {};
     for (const definition of propDefinitions) {
       materials[definition.id] = this.createMappedMaterial(definition.color, definition.textureUrl, 0.82);
     }
     return materials;
+  }
+
+  private createWaterMaterial(definition: EnvironmentMaterialDefinition): THREE.ShaderMaterial {
+    const material = new THREE.ShaderMaterial({
+      uniforms: {
+        uTime: { value: 0 },
+        uShallowColor: { value: new THREE.Color(definition.topColor || "#5198ba") },
+        uDeepColor: { value: new THREE.Color(definition.sideFullColor || definition.sideColor || "#1f5366") },
+        uMurkColor: { value: new THREE.Color("#14343a") }
+      },
+      vertexShader: `
+        attribute float aDepth;
+        varying vec2 vUv;
+        varying float vDepth;
+
+        void main() {
+          vUv = uv;
+          vDepth = aDepth;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform float uTime;
+        uniform vec3 uShallowColor;
+        uniform vec3 uDeepColor;
+        uniform vec3 uMurkColor;
+        varying vec2 vUv;
+        varying float vDepth;
+
+        float softStripe(vec2 uv, float speed, float scale) {
+          float lineA = sin((uv.x + uv.y * 0.42) * scale + uTime * speed);
+          float lineB = sin((uv.y - uv.x * 0.28) * (scale * 0.72) - uTime * speed * 0.64);
+          return smoothstep(0.38, 1.0, lineA * 0.5 + lineB * 0.5);
+        }
+
+        void main() {
+          float depth = clamp(vDepth / 4.0, 0.0, 1.0);
+          vec2 warpedUv = vUv + vec2(
+            sin(vUv.y * 7.0 + uTime * 0.18),
+            cos(vUv.x * 6.0 - uTime * 0.14)
+          ) * 0.018;
+          float murk = softStripe(warpedUv, 0.16, 14.0);
+          float darkPocket = smoothstep(0.2, 0.9, sin((warpedUv.x * 17.0 + warpedUv.y * 9.0) + uTime * 0.08) * 0.5 + 0.5);
+          vec3 color = mix(uShallowColor, uDeepColor, depth);
+          color = mix(color, uMurkColor, (murk * 0.18 + darkPocket * 0.1) * (0.45 + depth));
+          color += vec3(0.08, 0.15, 0.13) * softStripe(warpedUv + 0.21, 0.11, 23.0) * (1.0 - depth * 0.35);
+          float edgeFade = smoothstep(0.0, 0.18, min(min(vUv.x, 1.0 - vUv.x), min(vUv.y, 1.0 - vUv.y)));
+          float alpha = mix(0.5, 0.72, depth) * mix(0.7, 1.0, edgeFade);
+          gl_FragColor = vec4(color, alpha);
+        }
+      `,
+      transparent: true,
+      depthWrite: false,
+      side: THREE.DoubleSide
+    });
+    this.waterMaterials.add(material);
+    return material;
   }
 
   private createMappedMaterial(color: string, imageUrl: string, roughness: number): THREE.MeshStandardMaterial {
@@ -309,7 +379,7 @@ export class LevelScene {
     return sectionNames.flatMap((section) => Object.values(this.classMaterials[section]));
   }
 
-  private collectTerrainMaterials(): THREE.MeshStandardMaterial[] {
+  private collectTerrainMaterials(): THREE.Material[] {
     return Object.values(this.terrainMaterials).flatMap((materialSet) => [
       materialSet.top,
       materialSet.sideCap,
@@ -318,7 +388,7 @@ export class LevelScene {
     ]);
   }
 
-  private collectPropMaterials(): THREE.MeshStandardMaterial[] {
+  private collectPropMaterials(): THREE.Material[] {
     return Object.values(this.propMaterials);
   }
 
@@ -328,8 +398,12 @@ export class LevelScene {
       return existing;
     }
     const definition = this.environmentMaterials.find((material) => material.id === materialId) ?? fallbackMaterial;
+    const surfaceEffect = this.resolveSurfaceEffect(definition);
     const fallback = {
-      top: this.createMappedMaterial(definition.topColor, definition.topImageUrl, 0.72),
+      top:
+        surfaceEffect === "water"
+          ? this.createWaterMaterial(definition)
+          : this.createMappedMaterial(definition.topColor, definition.topImageUrl, 0.72),
       sideCap: this.createMappedMaterial(definition.sideCapColor || definition.sideColor, definition.sideCapImageUrl || definition.sideImageUrl, 0.86),
       sideFull: this.createMappedMaterial(definition.sideFullColor || definition.sideColor, definition.sideFullImageUrl || definition.sideImageUrl, 0.88),
       sideHalf: this.createMappedMaterial(definition.sideHalfColor || definition.sideColor, definition.sideHalfImageUrl || definition.sideImageUrl, 0.9)
@@ -342,7 +416,29 @@ export class LevelScene {
     return this.propDefinitions.find((propDefinition) => propDefinition.id === propId) ?? fallbackProp;
   }
 
-  private propMaterialFor(propId: PropDefinitionId): THREE.MeshStandardMaterial {
+  private materialDefinitionFor(materialId: string): EnvironmentMaterialDefinition {
+    return this.environmentMaterials.find((material) => material.id === materialId) ?? fallbackMaterial;
+  }
+
+  private resolveSurfaceEffect(definition: Partial<EnvironmentMaterialDefinition>): EnvironmentSurfaceEffect {
+    if (definition.surfaceEffect === "grass" || definition.surfaceEffect === "water" || definition.surfaceEffect === "solid") {
+      return definition.surfaceEffect;
+    }
+    const id = String(definition.id ?? "").toLowerCase();
+    if (id.includes("water")) {
+      return "water";
+    }
+    if (id.includes("grass") || id.includes("foliage")) {
+      return "grass";
+    }
+    return "solid";
+  }
+
+  private surfaceEffectFor(materialId: string): EnvironmentSurfaceEffect {
+    return this.resolveSurfaceEffect(this.materialDefinitionFor(materialId));
+  }
+
+  private propMaterialFor(propId: PropDefinitionId): THREE.Material {
     const existing = this.propMaterials[propId];
     if (existing) {
       return existing;
@@ -377,6 +473,8 @@ export class LevelScene {
     this.addGroundSurface(this.level);
     this.addBackgroundModel(this.level);
     this.addTerrain(this.level);
+    this.addWaterSeaweed(this.level);
+    this.addGrassBlades(this.level);
     for (const obstacle of this.level.obstacles) {
       this.addObstacle(this.level, obstacle);
     }
@@ -392,6 +490,7 @@ export class LevelScene {
   }
 
   private clearRoot(): void {
+    this.windObjects.clear();
     while (this.root.children.length > 0) {
       const child = this.root.children.pop();
       if (child) {
@@ -422,13 +521,17 @@ export class LevelScene {
   private isSharedMaterial(material: THREE.Material): boolean {
     return (
       Object.values(this.classMaterials).some((section) => Object.values(section).includes(material as THREE.MeshStandardMaterial)) ||
-      this.collectTerrainMaterials().includes(material as THREE.MeshStandardMaterial) ||
-      this.collectPropMaterials().includes(material as THREE.MeshStandardMaterial)
+      this.collectTerrainMaterials().includes(material) ||
+      this.collectPropMaterials().includes(material)
     );
   }
 
   private disposeMaterial(material: THREE.Material): void {
     const mappedMaterial = material as THREE.MeshStandardMaterial;
+    if (material instanceof THREE.ShaderMaterial) {
+      this.waterMaterials.delete(material);
+      this.windMaterials.delete(material);
+    }
     mappedMaterial.map?.dispose();
     material.dispose();
   }
@@ -528,9 +631,10 @@ export class LevelScene {
         const width = tileSize * 0.96;
         const depth = tileSize * 0.96;
 
-        const topMesh = new THREE.Mesh(this.createTerrainTopGeometry(width, depth, tile.terrain, x, z), terrainMaterials.top);
+        const topMesh = new THREE.Mesh(this.createTerrainTopGeometry(width, depth, tile.terrain, tile.height, x, z), terrainMaterials.top);
         topMesh.position.y = totalHeight + 0.002;
         topMesh.rotation.x = -Math.PI / 2;
+        topMesh.renderOrder = this.surfaceEffectFor(tile.terrain) === "water" ? 4 : 0;
         topMesh.receiveShadow = true;
         group.add(topMesh);
 
@@ -556,9 +660,211 @@ export class LevelScene {
     }
   }
 
-  private createTerrainTopGeometry(width: number, depth: number, materialId: string, x: number, z: number): THREE.PlaneGeometry {
+  private addWaterSeaweed(level: LevelData): void {
+    const positions: number[] = [];
+    const anchors: number[] = [];
+    const sways: number[] = [];
+
+    for (let z = 0; z < level.depth; z += 1) {
+      for (let x = 0; x < level.width; x += 1) {
+        const tile = level.tiles[z][x];
+        if (this.surfaceEffectFor(tile.terrain) !== "water") {
+          continue;
+        }
+
+        const center = this.worldPosition(level, x, z, 0);
+        const topY = this.tileTopY(level, x, z) - 0.035;
+        const availableHeight = Math.max(0.08, topY - 0.045);
+        const bladeCount = 3 + (this.hashTile(`${tile.terrain}:seaweed-count`, x, z) % 4);
+        for (let blade = 0; blade < bladeCount; blade += 1) {
+          const seed = this.hashTile(`${tile.terrain}:seaweed:${blade}`, x, z);
+          const offsetX = (this.random01(seed) - 0.5) * tileSize * 0.62;
+          const offsetZ = (this.random01(seed + 17) - 0.5) * tileSize * 0.62;
+          const height = Math.min(availableHeight, 0.11 + this.random01(seed + 37) * 0.18);
+          const baseY = Math.max(0.035, topY - height - this.random01(seed + 53) * availableHeight * 0.2);
+          const width = 0.035 + this.random01(seed + 71) * 0.035;
+          const angle = this.random01(seed + 97) * Math.PI * 2;
+          const rightX = Math.cos(angle) * width;
+          const rightZ = Math.sin(angle) * width;
+          const centerX = center.x + offsetX;
+          const centerZ = center.z + offsetZ;
+          const tipLean = (this.random01(seed + 113) - 0.5) * 0.06;
+
+          this.pushRibbon(
+            positions,
+            anchors,
+            sways,
+            new THREE.Vector3(centerX - rightX, baseY, centerZ - rightZ),
+            new THREE.Vector3(centerX + rightX, baseY, centerZ + rightZ),
+            new THREE.Vector3(centerX + tipLean, baseY + height, centerZ - tipLean * 0.6),
+            new THREE.Vector3(centerX + tipLean + rightX * 0.45, baseY + height * 0.78, centerZ - tipLean * 0.6 + rightZ * 0.45),
+            seed
+          );
+        }
+      }
+    }
+
+    if (positions.length === 0) {
+      return;
+    }
+
+    const mesh = new THREE.Mesh(this.createBladeGeometry(positions, anchors, sways), this.createSwayBladeMaterial("seaweed"));
+    mesh.renderOrder = 3;
+    this.root.add(mesh);
+  }
+
+  private addGrassBlades(level: LevelData): void {
+    const positions: number[] = [];
+    const anchors: number[] = [];
+    const sways: number[] = [];
+    let bladeTotal = 0;
+
+    for (let z = 0; z < level.depth; z += 1) {
+      for (let x = 0; x < level.width; x += 1) {
+        if (bladeTotal >= maxGrassBlades || this.tileHasObstacle(level, x, z)) {
+          continue;
+        }
+        const tile = level.tiles[z][x];
+        const material = this.materialDefinitionFor(tile.terrain);
+        const grassDensity = material.grassDensity ?? (this.resolveSurfaceEffect(material) === "grass" ? fallbackMaterial.grassDensity : 0);
+        if (this.resolveSurfaceEffect(material) !== "grass" || grassDensity <= 0) {
+          continue;
+        }
+
+        const bladeCount = Math.min(Math.max(0, Math.round(grassDensity)), maxGrassBlades - bladeTotal);
+        const center = this.worldPosition(level, x, z, this.tileTopY(level, x, z) + 0.012);
+        for (let blade = 0; blade < bladeCount; blade += 1) {
+          const seed = this.hashTile(`${tile.terrain}:grass:${blade}`, x, z);
+          const offsetX = (this.random01(seed) - 0.5) * tileSize * 0.72;
+          const offsetZ = (this.random01(seed + 19) - 0.5) * tileSize * 0.72;
+          const height = 0.08 + this.random01(seed + 41) * 0.16;
+          const width = 0.022 + this.random01(seed + 67) * 0.035;
+          const angle = this.random01(seed + 89) * Math.PI * 2;
+          const rightX = Math.cos(angle) * width;
+          const rightZ = Math.sin(angle) * width;
+          const baseX = center.x + offsetX;
+          const baseZ = center.z + offsetZ;
+          const lean = (this.random01(seed + 107) - 0.5) * 0.05;
+
+          this.pushTriangleBlade(
+            positions,
+            anchors,
+            sways,
+            new THREE.Vector3(baseX - rightX, center.y, baseZ - rightZ),
+            new THREE.Vector3(baseX + rightX, center.y, baseZ + rightZ),
+            new THREE.Vector3(baseX + lean, center.y + height, baseZ - lean * 0.65),
+            seed
+          );
+          bladeTotal += 1;
+        }
+      }
+    }
+
+    if (positions.length === 0) {
+      return;
+    }
+
+    const mesh = new THREE.Mesh(this.createBladeGeometry(positions, anchors, sways), this.createSwayBladeMaterial("grass"));
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    this.root.add(mesh);
+  }
+
+  private pushTriangleBlade(
+    positions: number[],
+    anchors: number[],
+    sways: number[],
+    leftBase: THREE.Vector3,
+    rightBase: THREE.Vector3,
+    tip: THREE.Vector3,
+    seed: number
+  ): void {
+    for (const [point, anchor] of [
+      [leftBase, 0],
+      [rightBase, 0],
+      [tip, 1]
+    ] as const) {
+      positions.push(point.x, point.y, point.z);
+      anchors.push(anchor);
+      sways.push(this.random01(seed + positions.length) * Math.PI * 2);
+    }
+  }
+
+  private pushRibbon(
+    positions: number[],
+    anchors: number[],
+    sways: number[],
+    leftBase: THREE.Vector3,
+    rightBase: THREE.Vector3,
+    tip: THREE.Vector3,
+    shoulder: THREE.Vector3,
+    seed: number
+  ): void {
+    this.pushTriangleBlade(positions, anchors, sways, leftBase, rightBase, tip, seed);
+    this.pushTriangleBlade(positions, anchors, sways, rightBase, shoulder, tip, seed + 11);
+  }
+
+  private createBladeGeometry(positions: number[], anchors: number[], sways: number[]): THREE.BufferGeometry {
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+    geometry.setAttribute("aAnchor", new THREE.Float32BufferAttribute(anchors, 1));
+    geometry.setAttribute("aSway", new THREE.Float32BufferAttribute(sways, 1));
+    geometry.computeVertexNormals();
+    return geometry;
+  }
+
+  private createSwayBladeMaterial(kind: "grass" | "seaweed"): THREE.ShaderMaterial {
+    const material = new THREE.ShaderMaterial({
+      uniforms: {
+        uTime: { value: 0 },
+        uBaseColor: { value: new THREE.Color(kind === "grass" ? "#456f38" : "#173f35") },
+        uTipColor: { value: new THREE.Color(kind === "grass" ? "#9bc95d" : "#4f8b63") },
+        uStrength: { value: kind === "grass" ? 0.035 : 0.025 },
+        uSpeed: { value: kind === "grass" ? 1.2 : 0.55 },
+        uOpacity: { value: kind === "grass" ? 1 : 0.74 }
+      },
+      vertexShader: `
+        attribute float aAnchor;
+        attribute float aSway;
+        uniform float uTime;
+        uniform float uStrength;
+        uniform float uSpeed;
+        varying float vAnchor;
+
+        void main() {
+          vec3 transformed = position;
+          float wave = sin(uTime * uSpeed + aSway + position.x * 0.53 + position.z * 0.31);
+          transformed.x += wave * uStrength * aAnchor;
+          transformed.z += cos(uTime * uSpeed * 0.7 + aSway) * uStrength * 0.45 * aAnchor;
+          vAnchor = aAnchor;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(transformed, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform vec3 uBaseColor;
+        uniform vec3 uTipColor;
+        uniform float uOpacity;
+        varying float vAnchor;
+
+        void main() {
+          vec3 color = mix(uBaseColor, uTipColor, smoothstep(0.0, 1.0, vAnchor));
+          gl_FragColor = vec4(color, uOpacity);
+        }
+      `,
+      transparent: kind === "seaweed",
+      depthWrite: kind !== "seaweed",
+      side: THREE.DoubleSide
+    });
+    this.windMaterials.add(material);
+    return material;
+  }
+
+  private createTerrainTopGeometry(width: number, depth: number, materialId: string, tileHeight: number, x: number, z: number): THREE.PlaneGeometry {
     const geometry = new THREE.PlaneGeometry(width, depth);
     this.rotateAllUvs(geometry, this.topUvRotationForTile(materialId, x, z));
+    const position = geometry.getAttribute("position");
+    const waterDepth = this.surfaceEffectFor(materialId) === "water" ? tileHeight : 0;
+    geometry.setAttribute("aDepth", new THREE.Float32BufferAttribute(Array.from({ length: position.count }, () => waterDepth), 1));
     return geometry;
   }
 
@@ -579,6 +885,17 @@ export class LevelScene {
 
   private topUvRotationForTile(materialId: string, x: number, z: number): number {
     return topUvRotations[this.hashTile(materialId, x, z) % topUvRotations.length];
+  }
+
+  private tileHasObstacle(level: LevelData, x: number, z: number): boolean {
+    return level.obstacles.some((obstacle) => obstacle.x === x && obstacle.z === z);
+  }
+
+  private random01(seed: number): number {
+    let value = seed + 0x6d2b79f5;
+    value = Math.imul(value ^ (value >>> 15), value | 1);
+    value ^= value + Math.imul(value ^ (value >>> 7), value | 61);
+    return ((value ^ (value >>> 14)) >>> 0) / 4294967296;
   }
 
   private hashTile(materialId: string, x: number, z: number): number {
@@ -612,7 +929,7 @@ export class LevelScene {
     const baseY = this.tileTopY(level, obstacle.x, obstacle.z);
     const group = this.createPropObject(obstacle.type, 1, true);
     group.position.copy(this.worldPosition(level, obstacle.x, obstacle.z, baseY));
-    group.userData = { ...group.userData, x: obstacle.x, z: obstacle.z };
+    group.userData = { ...group.userData, x: obstacle.x, z: obstacle.z, windSeed: this.hashTile(`prop:${obstacle.type}`, obstacle.x, obstacle.z) };
     group.traverse((child) => {
       child.userData = { ...child.userData, x: obstacle.x, z: obstacle.z };
       const mesh = child as THREE.Mesh;
@@ -627,6 +944,7 @@ export class LevelScene {
     const group = this.createPropObject(prop.type, prop.scale, false);
     group.position.copy(this.worldPosition(level, prop.x, prop.z, 0));
     group.rotation.y = prop.rotation;
+    group.userData.windSeed = this.hashTile(`prop:${prop.type}`, prop.x, prop.z);
     this.root.add(group);
   }
 
@@ -636,6 +954,10 @@ export class LevelScene {
     const height = Math.max(0.1, definition.height * resolvedScale);
     const group = new THREE.Group();
     group.userData = { propId: definition.id, height };
+    if (this.shouldPropSway(definition)) {
+      group.userData.windSeed = this.hashTile(`prop:${definition.id}`, Math.round(resolvedScale * 100), includeClickProxy ? 1 : 0);
+      this.windObjects.add(group);
+    }
 
     const proxy = new THREE.Mesh(
       new THREE.BoxGeometry(
@@ -666,6 +988,14 @@ export class LevelScene {
       });
     }
     return group;
+  }
+
+  private shouldPropSway(definition: PropDefinition): boolean {
+    if (definition.windEffect) {
+      return true;
+    }
+    const label = `${definition.id} ${definition.name}`.toLowerCase();
+    return label.includes("tree") || label.includes("foliage") || label.includes("plant");
   }
 
   private loadPropModel(definition: PropDefinition): Promise<THREE.Group> {
@@ -831,9 +1161,30 @@ export class LevelScene {
   }
 
   private animate(): void {
+    const elapsed = this.clock.getElapsedTime();
+    this.updateAnimatedEnvironment(elapsed);
     this.controls.update();
     this.renderer.render(this.scene, this.camera);
     requestAnimationFrame(() => this.animate());
+  }
+
+  private updateAnimatedEnvironment(elapsed: number): void {
+    for (const material of this.waterMaterials) {
+      material.uniforms.uTime.value = elapsed;
+    }
+    for (const material of this.windMaterials) {
+      material.uniforms.uTime.value = elapsed;
+    }
+    for (const object of this.windObjects) {
+      if (!object.parent) {
+        this.windObjects.delete(object);
+        continue;
+      }
+      const seed = Number(object.userData.windSeed ?? 0);
+      const phase = this.random01(seed) * Math.PI * 2;
+      object.rotation.x = Math.sin(elapsed * 0.9 + phase) * 0.025;
+      object.rotation.z = Math.cos(elapsed * 0.75 + phase * 0.7) * 0.018;
+    }
   }
 
   private resize(): void {
