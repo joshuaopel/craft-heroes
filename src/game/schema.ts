@@ -16,6 +16,10 @@ export interface ClassSectionStats {
   support: number;
 }
 
+export interface StatModifier extends Partial<ClassSectionStats> {
+  initiative?: number;
+}
+
 export type AbilityTrigger = "active" | "passive" | "onMove" | "onAttack" | "onDefend" | "onSupport";
 
 export interface AbilityDefinition {
@@ -40,6 +44,38 @@ export interface ClassDefinition {
   name: string;
   color: string;
   sections: Record<SectionName, ClassSectionDefinition>;
+}
+
+export type ConditionKind = "buff" | "debuff" | "trap" | "status";
+
+export interface ConditionDefinition {
+  id: string;
+  name: string;
+  kind: ConditionKind;
+  icon: string;
+  color: string;
+  duration: number;
+  stackable: boolean;
+  hidden: boolean;
+  description: string;
+  modifiers: StatModifier;
+  effect: string;
+}
+
+export interface InitiativeSettings {
+  base: number;
+  headWeight: number;
+  bodyWeight: number;
+  legsWeight: number;
+  heightWeight: number;
+  conditionWeight: number;
+  random: number;
+  tieBreaker: "player" | "enemy" | "higherHp";
+}
+
+export interface GameplayRules {
+  initiative: InitiativeSettings;
+  conditions: ConditionDefinition[];
 }
 
 export interface EnvironmentMaterialDefinition {
@@ -150,6 +186,14 @@ export interface UnitData {
   hp: number;
   rotations: Record<SectionName, number>;
   faces: UnitFaceLayout;
+  conditions?: UnitConditionState[];
+}
+
+export interface UnitConditionState {
+  id: string;
+  turns: number;
+  stacks: number;
+  source?: string;
 }
 
 export interface LevelObjective {
@@ -216,6 +260,7 @@ export interface CampaignData {
   title: string;
   startLevel: string;
   titleScreen?: TitleScreenSettings;
+  gameplay?: GameplayRules;
   levels: CampaignLevelRef[];
 }
 

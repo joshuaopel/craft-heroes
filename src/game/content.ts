@@ -5,8 +5,10 @@ import type {
   ClassDefinition,
   ClassId,
   ClassSectionStats,
+  ConditionDefinition,
   EnvironmentMaterialDefinition,
   EnvironmentSettings,
+  GameplayRules,
   LevelData,
   PropDefinition,
   TerrainType,
@@ -36,6 +38,57 @@ function ability(name: string, trigger: AbilityTrigger, icon: string, color: str
   };
 }
 
+function condition(
+  id: string,
+  name: string,
+  kind: ConditionDefinition["kind"],
+  icon: string,
+  color: string,
+  duration: number,
+  description: string,
+  modifiers: ConditionDefinition["modifiers"],
+  effect = "",
+  stackable = false,
+  hidden = false
+): ConditionDefinition {
+  return {
+    id,
+    name,
+    kind,
+    icon,
+    color,
+    duration,
+    description,
+    modifiers,
+    effect,
+    stackable,
+    hidden
+  };
+}
+
+export const defaultGameplayRules: GameplayRules = {
+  initiative: {
+    base: 10,
+    headWeight: 1,
+    bodyWeight: 0.35,
+    legsWeight: 1.15,
+    heightWeight: 1,
+    conditionWeight: 1,
+    random: 0,
+    tieBreaker: "player"
+  },
+  conditions: [
+    condition("braced", "Braced", "buff", "SH", "#d24a35", 1, "+1 defense and +1 initiative until the next round.", { defense: 1, initiative: 1 }),
+    condition("marked", "Marked", "debuff", "MK", "#f2bd55", 2, "-1 defense; ranged and support actions can read this target.", { defense: -1 }),
+    condition("warded", "Warded", "buff", "WD", "#46a65c", 2, "+2 defense from protective support.", { defense: 2 }),
+    condition("haste", "Haste", "buff", "HS", "#76a957", 1, "+1 move and +2 initiative.", { move: 1, initiative: 2 }),
+    condition("exposed", "Exposed", "debuff", "EX", "#8c6ad1", 2, "-2 defense after a magical burst.", { defense: -2 }),
+    condition("poisoned", "Poisoned", "debuff", "PS", "#5da85a", 3, "Take 1 damage at the end of each round.", {}, "damagePerRound:1"),
+    condition("snared", "Snared", "trap", "TR", "#8d6a3f", 2, "-2 move after triggering a trap.", { move: -2 }, "", false, true),
+    condition("healing-aura", "Healing Aura", "buff", "HA", "#6fcf7c", 1, "+1 support from sanctuary movement.", { support: 1 }, "healPerRound:1")
+  ]
+};
+
 export const defaultClassDefinitions: ClassDefinition[] = [
   {
     id: "Warrior",
@@ -45,7 +98,7 @@ export const defaultClassDefinitions: ClassDefinition[] = [
       head: {
         imageUrl: "./assets/classes/warrior-head.png",
         stats: stats(1, 3, 0, 1, 0),
-        abilities: [ability("Braced Focus", "passive", "SH", "#d24a35", "Ignore the first push or forced turn each round.", "ignorePush:1")],
+        abilities: [ability("Braced Focus", "passive", "SH", "#d24a35", "Ignore the first push or forced turn each round.", "ignorePush:1;apply:braced")],
         conditions: ["Braced: ignore first push"]
       },
       body: {
@@ -57,7 +110,7 @@ export const defaultClassDefinitions: ClassDefinition[] = [
       legs: {
         imageUrl: "./assets/classes/warrior-legs.png",
         stats: stats(0, 2, 2, 0, 0),
-        abilities: [ability("Hold Line", "onDefend", "ST", "#b96a42", "+1 defense if this unit did not move this turn.", "stationaryDefense:1")],
+        abilities: [ability("Hold Line", "onDefend", "ST", "#b96a42", "+1 defense if this unit did not move this turn.", "stationaryDefense:1;apply:braced")],
         conditions: ["Hold line: +1 defense if unmoved"]
       }
     }
@@ -76,13 +129,13 @@ export const defaultClassDefinitions: ClassDefinition[] = [
       body: {
         imageUrl: "./assets/classes/healer-body.png",
         stats: stats(1, 2, 0, 2, 4),
-        abilities: [ability("Mend", "active", "HE", "#46a65c", "Restore HP to an adjacent ally instead of attacking.", "healAdjacent:3")],
+        abilities: [ability("Mend", "active", "HE", "#46a65c", "Restore HP to an adjacent ally instead of attacking.", "healAdjacent:3;apply:warded")],
         conditions: ["Mend: restores adjacent ally HP"]
       },
       legs: {
         imageUrl: "./assets/classes/healer-legs.png",
         stats: stats(0, 1, 2, 0, 2),
-        abilities: [ability("Sanctuary Step", "onMove", "SA", "#6fcf7c", "Ignore water movement cost and leave a support aura.", "ignoreTerrain:water;supportAura:1")],
+        abilities: [ability("Sanctuary Step", "onMove", "SA", "#6fcf7c", "Ignore water movement cost and leave a support aura.", "ignoreTerrain:water;apply:healing-aura")],
         conditions: ["Sanctuary: ignores water cost"]
       }
     }
@@ -95,19 +148,19 @@ export const defaultClassDefinitions: ClassDefinition[] = [
       head: {
         imageUrl: "./assets/classes/ranger-head.png",
         stats: stats(2, 1, 0, 4, 1),
-        abilities: [ability("Scout Sight", "passive", "EY", "#4f7f3c", "Extend line of sight when attacking from height.", "heightLineOfSight:1")],
+        abilities: [ability("Scout Sight", "passive", "EY", "#4f7f3c", "Extend line of sight when attacking from height.", "heightLineOfSight:1;applyOnAttack:marked")],
         conditions: ["Scout: extends line of sight from height"]
       },
       body: {
         imageUrl: "./assets/classes/ranger-body.png",
         stats: stats(3, 1, 0, 5, 0),
-        abilities: [ability("Volley", "onAttack", "AR", "#4f7f3c", "Fire at range; cover can reduce or block the shot.", "rangedAttack:5;coverBlocked:1")],
+        abilities: [ability("Volley", "onAttack", "AR", "#4f7f3c", "Fire at range; cover can reduce or block the shot.", "rangedAttack:5;coverBlocked:1;apply:marked;apply:snared")],
         conditions: ["Volley: blocked by cover"]
       },
       legs: {
         imageUrl: "./assets/classes/ranger-legs.png",
         stats: stats(0, 1, 4, 0, 0),
-        abilities: [ability("Swift Pivot", "onMove", "BT", "#76a957", "Move farther and rotate one section after moving.", "bonusMove:1;postMoveRotate:1")],
+        abilities: [ability("Swift Pivot", "onMove", "BT", "#76a957", "Move farther and rotate one section after moving.", "bonusMove:1;postMoveRotate:1;apply:haste")],
         conditions: ["Swift: may rotate after moving"]
       }
     }
@@ -126,7 +179,7 @@ export const defaultClassDefinitions: ClassDefinition[] = [
       body: {
         imageUrl: "./assets/classes/mage-body.png",
         stats: stats(4, 1, 0, 3, 2),
-        abilities: [ability("Blast", "onAttack", "FX", "#8c6ad1", "Damage the target tile and splash nearby enemies.", "splashRadius:1")],
+        abilities: [ability("Blast", "onAttack", "FX", "#8c6ad1", "Damage the target tile and splash nearby enemies.", "splashRadius:1;apply:exposed")],
         conditions: ["Blast: affects nearby target tiles"]
       },
       legs: {
@@ -564,6 +617,7 @@ export const defaultCampaign: CampaignData = {
     orbitSpeed: 0.08,
     mockBattle: true
   },
+  gameplay: structuredClone(defaultGameplayRules),
   levels: [
     { id: "forest-pass-01", file: "levels/forest-pass-01.json", next: ["ridge-ambush-02"] },
     { id: "ridge-ambush-02", file: "levels/ridge-ambush-02.json", next: [] }

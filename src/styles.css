@@ -457,6 +457,10 @@ textarea {
   font-size: 10px;
 }
 
+.rules-textarea {
+  min-height: 230px;
+}
+
 .story-list {
   display: grid;
   gap: 7px;
@@ -701,6 +705,15 @@ textarea {
   font-style: normal;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.condition-chip {
+  min-width: 118px;
+  border-style: dashed;
+}
+
+.condition-chip b {
+  color: var(--ability-color);
 }
 
 .client-actions {

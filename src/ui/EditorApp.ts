@@ -3,6 +3,7 @@ import {
   defaultClassDefinitions,
   defaultEnvironmentMaterials,
   defaultEnvironmentSettings,
+  defaultGameplayRules,
   defaultLevels,
   defaultPropDefinitions,
   makeTiles,
@@ -27,11 +28,14 @@ import type {
   ClassDefinition,
   ClassId,
   ClassSectionStats,
+  ConditionDefinition,
+  ConditionKind,
   EditorTool,
   EnvironmentMaterialDefinition,
   EnvironmentMaterialId,
   EnvironmentSurfaceEffect,
   EnvironmentSettings,
+  GameplayRules,
   LevelData,
   ObstacleType,
   PropDefinition,
@@ -51,6 +55,7 @@ import { LevelScene } from "../render/LevelScene";
 const directionLabels = ["S", "E", "N", "W"] as const;
 const sectionNames: SectionName[] = ["head", "body", "legs"];
 const abilityTriggers: AbilityTrigger[] = ["active", "passive", "onMove", "onAttack", "onDefend", "onSupport"];
+const conditionKinds: ConditionKind[] = ["buff", "debuff", "trap", "status"];
 const statFields: Array<{ key: keyof ClassSectionStats; label: string }> = [
   { key: "attack", label: "ATK" },
   { key: "defense", label: "DEF" },
@@ -166,6 +171,39 @@ function normalizeStats(stats: Partial<ClassSectionStats> | undefined): ClassSec
     range: Math.max(0, Math.min(12, numberOrFallback(stats?.range, 0))),
     support: Math.max(0, Math.min(12, numberOrFallback(stats?.support, 0)))
   };
+}
+
+function normalizeStatModifier(modifiers: Partial<ConditionDefinition["modifiers"]> | undefined): ConditionDefinition["modifiers"] {
+  return {
+    attack: Math.max(-12, Math.min(12, numberOrFallback(modifiers?.attack, 0))),
+    defense: Math.max(-12, Math.min(12, numberOrFallback(modifiers?.defense, 0))),
+    move: Math.max(-12, Math.min(12, numberOrFallback(modifiers?.move, 0))),
+    range: Math.max(-12, Math.min(12, numberOrFallback(modifiers?.range, 0))),
+    support: Math.max(-12, Math.min(12, numberOrFallback(modifiers?.support, 0))),
+    initiative: Math.max(-12, Math.min(12, numberOrFallback(modifiers?.initiative, 0)))
+  };
+}
+
+function modifierToText(modifiers: ConditionDefinition["modifiers"]): string {
+  return Object.entries(modifiers)
+    .filter(([, value]) => Number(value) !== 0)
+    .map(([key, value]) => `${key}:${value}`)
+    .join(";");
+}
+
+function textToModifier(value: string): ConditionDefinition["modifiers"] {
+  const modifier: ConditionDefinition["modifiers"] = {};
+  for (const part of value.split(";").map((item) => item.trim()).filter(Boolean)) {
+    const [key, rawValue] = part.split(":").map((item) => item.trim());
+    if (!key) {
+      continue;
+    }
+    const parsed = numberOrFallback(rawValue, 0);
+    if (["attack", "defense", "move", "range", "support", "initiative"].includes(key)) {
+      modifier[key as keyof ConditionDefinition["modifiers"]] = Math.max(-12, Math.min(12, parsed));
+    }
+  }
+  return normalizeStatModifier(modifier);
 }
 
 function idFromLabel(label: string, fallbackPrefix: string): string {
@@ -364,6 +402,19 @@ function normalizeLevelData(level: LevelData): LevelData {
         }))
       : [],
     surroundings: Array.isArray(level.surroundings) ? level.surroundings : [],
+    units: Array.isArray(level.units)
+      ? level.units.map((unit) => ({
+          ...unit,
+          conditions: Array.isArray(unit.conditions)
+            ? unit.conditions.map((condition) => ({
+                id: String(condition.id ?? ""),
+                turns: Math.max(0, Math.min(12, numberOrFallback(condition.turns, 0))),
+                stacks: Math.max(1, Math.min(9, numberOrFallback(condition.stacks, 1))),
+                source: condition.source
+              })).filter((condition) => condition.id)
+            : []
+        }))
+      : [],
     story: Array.isArray(level.story) ? level.story : []
   };
 }
@@ -381,6 +432,45 @@ function normalizeTitleScreenSettings(settings: Partial<TitleScreenSettings> | u
     cameraOrbit: settings?.cameraOrbit ?? fallback?.cameraOrbit ?? true,
     orbitSpeed: Math.max(0.01, Math.min(0.4, numberOrFallback(settings?.orbitSpeed, fallback?.orbitSpeed ?? 0.08))),
     mockBattle: settings?.mockBattle ?? fallback?.mockBattle ?? true
+  };
+}
+
+function normalizeConditionDefinition(condition: Partial<ConditionDefinition>, index: number): ConditionDefinition {
+  const fallback = defaultGameplayRules.conditions[index] ?? defaultGameplayRules.conditions[0];
+  const name = condition.name || fallback.name || `Condition ${index + 1}`;
+  const kind = conditionKinds.includes(condition.kind as ConditionKind) ? (condition.kind as ConditionKind) : fallback.kind;
+  return {
+    id: condition.id || idFromLabel(name, "condition"),
+    name,
+    kind,
+    icon: (condition.icon || name.slice(0, 2) || "FX").toUpperCase().slice(0, 3),
+    color: isHexColor(condition.color) ? condition.color : fallback.color,
+    duration: Math.max(0, Math.min(12, numberOrFallback(condition.duration, fallback.duration))),
+    stackable: Boolean(condition.stackable ?? fallback.stackable),
+    hidden: Boolean(condition.hidden ?? fallback.hidden),
+    description: condition.description || fallback.description || "",
+    modifiers: normalizeStatModifier(condition.modifiers ?? fallback.modifiers),
+    effect: condition.effect || ""
+  };
+}
+
+function normalizeGameplayRules(rules: Partial<GameplayRules> | undefined): GameplayRules {
+  const incomingConditions = Array.isArray(rules?.conditions) ? rules.conditions : defaultGameplayRules.conditions;
+  return {
+    initiative: {
+      base: Math.max(0, Math.min(50, numberOrFallback(rules?.initiative?.base, defaultGameplayRules.initiative.base))),
+      headWeight: Math.max(0, Math.min(5, numberOrFallback(rules?.initiative?.headWeight, defaultGameplayRules.initiative.headWeight))),
+      bodyWeight: Math.max(0, Math.min(5, numberOrFallback(rules?.initiative?.bodyWeight, defaultGameplayRules.initiative.bodyWeight))),
+      legsWeight: Math.max(0, Math.min(5, numberOrFallback(rules?.initiative?.legsWeight, defaultGameplayRules.initiative.legsWeight))),
+      heightWeight: Math.max(0, Math.min(5, numberOrFallback(rules?.initiative?.heightWeight, defaultGameplayRules.initiative.heightWeight))),
+      conditionWeight: Math.max(0, Math.min(5, numberOrFallback(rules?.initiative?.conditionWeight, defaultGameplayRules.initiative.conditionWeight))),
+      random: Math.max(0, Math.min(10, numberOrFallback(rules?.initiative?.random, defaultGameplayRules.initiative.random))),
+      tieBreaker:
+        rules?.initiative?.tieBreaker === "enemy" || rules?.initiative?.tieBreaker === "higherHp"
+          ? rules.initiative.tieBreaker
+          : defaultGameplayRules.initiative.tieBreaker
+    },
+    conditions: incomingConditions.map((condition, index) => normalizeConditionDefinition(condition, index))
   };
 }
 
@@ -413,6 +503,7 @@ function normalizeCampaignData(campaign: CampaignData, levels: LevelData[]): Cam
     title: campaign.title || defaultCampaign.title,
     startLevel,
     titleScreen: normalizeTitleScreenSettings(campaign.titleScreen, startLevel),
+    gameplay: normalizeGameplayRules(campaign.gameplay),
     levels: refs
   };
 }
@@ -491,6 +582,67 @@ function textToConditions(value: string): string[] {
     .split(/[,;\n]+/)
     .map((condition) => condition.trim())
     .filter(Boolean);
+}
+
+function ruleConditionsToText(conditions: ConditionDefinition[]): string {
+  return conditions
+    .map((condition) =>
+      [
+        condition.name,
+        condition.kind,
+        condition.icon,
+        condition.color,
+        String(condition.duration),
+        condition.stackable ? "stack" : "single",
+        condition.hidden ? "hidden" : "shown",
+        modifierToText(condition.modifiers),
+        condition.effect,
+        condition.description
+      ]
+        .map((part) => part.trim())
+        .join(" | ")
+    )
+    .join("\n");
+}
+
+function textToRuleConditions(value: string, fallback: ConditionDefinition[]): ConditionDefinition[] {
+  const rows = value
+    .split("\n")
+    .map((row) => row.trim())
+    .filter(Boolean);
+  if (rows.length === 0) {
+    return fallback;
+  }
+  return rows.map((row, index) => {
+    const [
+      name = `Condition ${index + 1}`,
+      kind = "status",
+      icon = "",
+      color = "#60d7e4",
+      duration = "1",
+      stackMode = "single",
+      visibility = "shown",
+      modifiers = "",
+      effect = "",
+      description = ""
+    ] = row.split("|").map((part) => part.trim());
+    return normalizeConditionDefinition(
+      {
+        id: idFromLabel(name, "condition"),
+        name,
+        kind: conditionKinds.includes(kind as ConditionKind) ? (kind as ConditionKind) : "status",
+        icon,
+        color,
+        duration: numberOrFallback(duration, 1),
+        stackable: /^stack/i.test(stackMode),
+        hidden: /^hidden/i.test(visibility),
+        modifiers: textToModifier(modifiers),
+        effect,
+        description
+      },
+      index
+    );
+  });
 }
 
 interface EditorState {
@@ -775,6 +927,69 @@ export class EditorApp {
     `);
   }
 
+  private openGameplayRulesEditor(): void {
+    const rules = normalizeGameplayRules(this.campaign.gameplay);
+    const tieBreakerOptions = (["player", "enemy", "higherHp"] as const)
+      .map((option) => `<option value="${option}" ${rules.initiative.tieBreaker === option ? "selected" : ""}>${option}</option>`)
+      .join("");
+    this.openUtility(`
+      <div class="utility-modal rules-editor-modal" role="dialog" aria-modal="true" aria-label="Gameplay rules editor">
+        <div class="utility-head">
+          <div>
+            <span>Gameplay Utility</span>
+            <h2>Gameplay Rules</h2>
+          </div>
+          <button data-utility-action="close">Close</button>
+        </div>
+        <div class="compact-grid">
+          <label class="field">
+            <span>Initiative Base</span>
+            <input data-rules-field="base" type="number" min="0" max="50" step="1" value="${rules.initiative.base}">
+          </label>
+          <label class="field">
+            <span>Head Weight</span>
+            <input data-rules-field="headWeight" type="number" min="0" max="5" step="0.05" value="${rules.initiative.headWeight}">
+          </label>
+          <label class="field">
+            <span>Body Weight</span>
+            <input data-rules-field="bodyWeight" type="number" min="0" max="5" step="0.05" value="${rules.initiative.bodyWeight}">
+          </label>
+          <label class="field">
+            <span>Legs Weight</span>
+            <input data-rules-field="legsWeight" type="number" min="0" max="5" step="0.05" value="${rules.initiative.legsWeight}">
+          </label>
+          <label class="field">
+            <span>Height Weight</span>
+            <input data-rules-field="heightWeight" type="number" min="0" max="5" step="0.05" value="${rules.initiative.heightWeight}">
+          </label>
+          <label class="field">
+            <span>Condition Weight</span>
+            <input data-rules-field="conditionWeight" type="number" min="0" max="5" step="0.05" value="${rules.initiative.conditionWeight}">
+          </label>
+          <label class="field">
+            <span>Random Bonus</span>
+            <input data-rules-field="random" type="number" min="0" max="10" step="1" value="${rules.initiative.random}">
+          </label>
+          <label class="field">
+            <span>Tie Breaker</span>
+            <select data-rules-field="tieBreaker">${tieBreakerOptions}</select>
+          </label>
+          <label class="field title-wide">
+            <span>Condition Library</span>
+            <textarea class="story-textarea rules-textarea" data-rules-field="conditions">${escapeHtml(ruleConditionsToText(rules.conditions))}</textarea>
+          </label>
+        </div>
+        <div class="title-preview-note">
+          <strong>Condition row format</strong>
+          <span>Name | kind | icon | color | duration | stack/single | hidden/shown | attack:1;defense:-1;initiative:2 | effectKey:1 | Description</span>
+        </div>
+        <div class="utility-actions">
+          <button data-utility-action="apply-rules">Apply Rules</button>
+        </div>
+      </div>
+    `);
+  }
+
   private handleUtilityAction(action: string, levelId?: string): void {
     if (action === "close") {
       this.closeUtility();
@@ -791,6 +1006,8 @@ export class EditorApp {
       this.applyLevelFlowEditor();
     } else if (action === "apply-title") {
       this.applyTitleEditor();
+    } else if (action === "apply-rules") {
+      this.applyGameplayRulesEditor();
     } else if (action === "preview-title-level") {
       const levelSelect = this.utility.querySelector<HTMLSelectElement>("[data-title-field='backgroundLevelId']");
       const nextLevelId = levelSelect?.value;
@@ -933,6 +1150,37 @@ export class EditorApp {
     this.closeUtility();
     this.updatePanel();
     this.flash("Updated title screen settings.");
+  }
+
+  private applyGameplayRulesEditor(): void {
+    const field = <T extends HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>(name: string) =>
+      this.utility.querySelector<T>(`[data-rules-field='${name}']`);
+    const fallback = normalizeGameplayRules(this.campaign.gameplay);
+    const tieBreakerValue = field<HTMLSelectElement>("tieBreaker")?.value;
+    const tieBreaker =
+      tieBreakerValue === "enemy" || tieBreakerValue === "higherHp" || tieBreakerValue === "player"
+        ? tieBreakerValue
+        : fallback.initiative.tieBreaker;
+    const conditionsText = field<HTMLTextAreaElement>("conditions")?.value ?? ruleConditionsToText(fallback.conditions);
+    this.campaign = {
+      ...this.campaign,
+      gameplay: normalizeGameplayRules({
+        initiative: {
+          base: numberOrFallback(field<HTMLInputElement>("base")?.value, fallback.initiative.base),
+          headWeight: numberOrFallback(field<HTMLInputElement>("headWeight")?.value, fallback.initiative.headWeight),
+          bodyWeight: numberOrFallback(field<HTMLInputElement>("bodyWeight")?.value, fallback.initiative.bodyWeight),
+          legsWeight: numberOrFallback(field<HTMLInputElement>("legsWeight")?.value, fallback.initiative.legsWeight),
+          heightWeight: numberOrFallback(field<HTMLInputElement>("heightWeight")?.value, fallback.initiative.heightWeight),
+          conditionWeight: numberOrFallback(field<HTMLInputElement>("conditionWeight")?.value, fallback.initiative.conditionWeight),
+          random: numberOrFallback(field<HTMLInputElement>("random")?.value, fallback.initiative.random),
+          tieBreaker
+        },
+        conditions: textToRuleConditions(conditionsText, fallback.conditions)
+      })
+    };
+    this.closeUtility();
+    this.updatePanel();
+    this.flash("Updated gameplay rules.");
   }
 
   private propRotationAngle(): number {
@@ -1958,7 +2206,7 @@ export class EditorApp {
       <div class="button-row">
         <button data-action="open-flow-editor">Level Flow</button>
         <button data-action="open-title-editor">Title Screen</button>
-        <button data-action="download-json">Export JSON</button>
+        <button data-action="open-rules-editor">Gameplay Rules</button>
       </div>
 
       <label class="field">
@@ -1967,9 +2215,13 @@ export class EditorApp {
       </label>
 
       <div class="button-row">
-        <button data-action="copy-json">Copy JSON</button>
+        <button data-action="download-json">Export JSON</button>
         <button data-action="import-json">Import JSON</button>
         <button data-action="next-level">Load Next</button>
+      </div>
+
+      <div class="button-row">
+        <button data-action="copy-json">Copy JSON</button>
       </div>
 
       <ul class="warnings">
@@ -2418,7 +2670,7 @@ export class EditorApp {
       this.flash("Saved campaign, level, builds, classes, materials, and props.");
     } else if (action === "load-sample") {
       this.levels = defaultLevels.map((level) => normalizeLevelData(cloneLevel(level)));
-      this.campaign = structuredClone(defaultCampaign);
+      this.campaign = normalizeCampaignData(structuredClone(defaultCampaign), this.levels);
       this.templates = unitTemplates.map((template) => structuredClone(template));
       this.classDefinitions = defaultClassDefinitions.map((classDefinition) => structuredClone(classDefinition));
       this.environmentMaterials = defaultEnvironmentMaterials.map((material) => structuredClone(material));
@@ -2439,6 +2691,8 @@ export class EditorApp {
       this.openLevelFlowEditor();
     } else if (action === "open-title-editor") {
       this.openTitleEditor();
+    } else if (action === "open-rules-editor") {
+      this.openGameplayRulesEditor();
     } else if (action === "download-json") {
       this.downloadJsonFile(safeFileName(this.campaign.id || "craft-heroes-campaign"), this.editorJson());
       this.flash("Exported campaign JSON.");
@@ -2480,9 +2734,6 @@ export class EditorApp {
         props?: PropDefinition[];
         propDefinitions?: PropDefinition[];
       };
-      if (parsed.campaign) {
-        this.campaign = parsed.campaign;
-      }
       if (parsed.levels?.length) {
         this.levels = parsed.levels.map((level) => normalizeLevelData(level));
       }
@@ -2525,6 +2776,14 @@ export class EditorApp {
         }
         this.state.levelId = normalizedLevel.id;
       } else if (!this.levels.some((level) => level.id === this.state.levelId)) {
+        this.state.levelId = this.levels.find((level) => level.id === this.campaign.startLevel)?.id ?? this.levels[0].id;
+      }
+      if (parsed.campaign) {
+        this.campaign = normalizeCampaignData(parsed.campaign, this.levels);
+      } else {
+        this.campaign = normalizeCampaignData(this.campaign, this.levels);
+      }
+      if (!this.levels.some((level) => level.id === this.state.levelId)) {
         this.state.levelId = this.levels.find((level) => level.id === this.campaign.startLevel)?.id ?? this.levels[0].id;
       }
       this.render(true);
