@@ -504,15 +504,25 @@ Story options:
 | Tile Z | Tile coordinate for `tileEnter`. |
 | Title | Optional heading. |
 | Speaker | Optional speaker label. |
+| Avatar URL | Optional portrait image shown in the story window. |
+| Avatar Upload | Uploads a local portrait into the story beat as a data URL. |
+| Clear Avatar | Removes the current story portrait. |
 | Pick Tile | Switches the board into story-picking mode; click the tile that should trigger the beat. |
 | Use Selected Tile | Copies the currently selected board tile into the story beat. |
 | Story Text | Body text shown to the player. |
+| Add / Update Story Beat | Adds a new beat, or updates the beat currently loaded for editing. |
+| Edit | Loads an existing beat back into the Story Beats form. |
+| New Story Beat | Clears the form and exits edit mode. |
 
 Best practices:
 
 - Use `levelStart` for mission briefing or mood.
 - Use `tileEnter` for ambushes, discoveries, tutorials, and environmental beats.
 - Prefer **Pick Tile** or **Use Selected Tile** over typing coordinates by hand.
+- Tile `0, 0` is the back-left board tile from the default editor camera. X runs
+  left-to-right, and Z runs back-to-front.
+- Use portraits for recurring speakers or tutorial callouts where the voice
+  should be recognized quickly.
 - Use `levelComplete` for transition text into the next mission.
 - Keep dialog short during play. Use screen presentation for chapter breaks.
 
@@ -579,6 +589,16 @@ Editor buttons:
 | Copy JSON | Copies the current editor bundle to clipboard. |
 | Import JSON | Reads JSON from the textarea and loads it into the editor. |
 | Load Next | Opens the next linked level from the current campaign flow. |
+
+Editor-to-client preview:
+
+- The **Client** button writes the latest editor bundle into a preview handoff and
+  opens `client.html?preview=editor`.
+- The client starts from the level currently selected in the editor.
+- The matching client save is cleared for preview mode, so deleted story beats or
+  old level data do not leak back in through Continue.
+- If you open `client.html` directly without `?preview=editor`, it uses normal
+  client content and save behavior.
 
 The editor export bundle can include:
 
@@ -659,7 +679,9 @@ Current objective types:
 
 Current save behavior:
 
-- Client saves use browser local storage by campaign ID and now include current round, level state, selected unit, and spent move/action/twist budgets.
+- Client saves use browser local storage by campaign ID and include current round, level state, selected unit, and spent move/action/twist budgets.
+- Saves include a content stamp. If the campaign/story data changes, incompatible
+  old saves are ignored instead of restoring stale story beats.
 - `New Game` clears compatible save progress.
 - `Continue` restores a compatible local save.
 - The desktop host bridge can own save files later.
@@ -773,7 +795,8 @@ Best practices for the future Electron/Steamworks wrapper:
 - Prop library with box/GLB assets, blockers, cover, wind, and light settings.
 - Class editor with section images, stats, notes, and abilities.
 - Unit build editor with four faces per section.
-- Story beat creation/removal with tile picking for `tileEnter` triggers.
+- Story beat creation/editing/removal with tile picking for `tileEnter` triggers.
+- Optional story speaker avatars.
 
 ### Implemented Client Features
 
@@ -793,6 +816,7 @@ Best practices for the future Electron/Steamworks wrapper:
 - Buff/debuff/trap/status condition application.
 - Round-end condition ticking.
 - Level start, tile enter, and level complete story beats.
+- Optional story avatars in client story windows.
 - Linear campaign advancement.
 - Browser local save/continue.
 - Host bridge hooks for desktop saves, presence, achievements, and content load.

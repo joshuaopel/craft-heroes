@@ -220,6 +220,7 @@ export interface StoryBeat {
   title: string;
   speaker: string;
   text: string;
+  avatarUrl?: string;
   x?: number;
   z?: number;
 }

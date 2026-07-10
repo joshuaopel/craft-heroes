@@ -50,6 +50,12 @@ import type {
   TileCoord,
   UnitTemplate
 } from "../game/schema";
+import {
+  clientPreviewStorageKey,
+  clientSaveStorageKey,
+  editorProjectStorageKey,
+  type ClientPreviewHandoff
+} from "../game/storage";
 import { LevelScene } from "../render/LevelScene";
 
 const directionLabels = ["S", "E", "N", "W"] as const;
@@ -67,7 +73,6 @@ const templatesStorageKey = "craft-heroes-unit-templates";
 const classesStorageKey = "craft-heroes-class-definitions";
 const materialsStorageKey = "craft-heroes-environment-materials";
 const propsStorageKey = "craft-heroes-prop-definitions";
-const editorProjectStorageKey = "craft-heroes-editor-project";
 
 type EditorProjectBundle = {
   campaign?: CampaignData;
@@ -391,6 +396,25 @@ function mergePropDefinitions(...sets: PropDefinition[][]): PropDefinition[] {
   return [...byId.values()];
 }
 
+function normalizeStoryBeat(beat: Partial<StoryBeat>, index: number, width: number, depth: number): StoryBeat {
+  const trigger = beat.trigger === "tileEnter" || beat.trigger === "levelComplete" ? beat.trigger : "levelStart";
+  const presentation = beat.presentation === "screen" ? "screen" : "dialog";
+  const normalized: StoryBeat = {
+    id: String(beat.id || `story-${index + 1}`),
+    trigger,
+    presentation,
+    title: String(beat.title ?? ""),
+    speaker: String(beat.speaker ?? ""),
+    text: String(beat.text || "New story beat"),
+    avatarUrl: typeof beat.avatarUrl === "string" ? beat.avatarUrl : ""
+  };
+  if (trigger === "tileEnter") {
+    normalized.x = Math.max(0, Math.min(Math.max(0, width - 1), Math.round(numberOrFallback(beat.x, 0))));
+    normalized.z = Math.max(0, Math.min(Math.max(0, depth - 1), Math.round(numberOrFallback(beat.z, 0))));
+  }
+  return normalized;
+}
+
 function normalizeLevelData(level: LevelData): LevelData {
   return {
     ...level,
@@ -415,7 +439,9 @@ function normalizeLevelData(level: LevelData): LevelData {
             : []
         }))
       : [],
-    story: Array.isArray(level.story) ? level.story : []
+    story: Array.isArray(level.story)
+      ? level.story.map((beat, index) => normalizeStoryBeat(beat, index, level.width, level.depth))
+      : []
   };
 }
 
@@ -646,11 +672,13 @@ function textToRuleConditions(value: string, fallback: ConditionDefinition[]): C
 }
 
 interface StoryDraft {
+  editingId?: string;
   trigger: StoryTrigger;
   presentation: StoryPresentation;
   title: string;
   speaker: string;
   text: string;
+  avatarUrl: string;
   x: number;
   z: number;
 }
@@ -697,6 +725,7 @@ export class EditorApp {
       title: "",
       speaker: "",
       text: "",
+      avatarUrl: "",
       x: 0,
       z: 0
     }
@@ -794,6 +823,67 @@ export class EditorApp {
 
   private editorJson(): string {
     return JSON.stringify(this.editorBundle(), null, 2);
+  }
+
+  private emptyStoryDraft(): StoryDraft {
+    return {
+      trigger: "levelStart",
+      presentation: "dialog",
+      title: "",
+      speaker: "",
+      text: "",
+      avatarUrl: "",
+      x: 0,
+      z: 0
+    };
+  }
+
+  private storyDraftFromBeat(beat: StoryBeat): StoryDraft {
+    return {
+      editingId: beat.id,
+      trigger: beat.trigger,
+      presentation: beat.presentation,
+      title: beat.title,
+      speaker: beat.speaker,
+      text: beat.text,
+      avatarUrl: beat.avatarUrl ?? "",
+      x: Math.max(0, Math.round(numberOrFallback(beat.x, 0))),
+      z: Math.max(0, Math.round(numberOrFallback(beat.z, 0)))
+    };
+  }
+
+  private editorPreviewBundle(): EditorProjectBundle {
+    return {
+      ...this.editorBundle(),
+      campaign: {
+        ...this.campaign,
+        startLevel: this.state.levelId,
+        titleScreen: {
+          ...normalizeTitleScreenSettings(this.campaign.titleScreen, this.state.levelId),
+          backgroundLevelId: this.state.levelId
+        }
+      }
+    };
+  }
+
+  private openClientPreview(): void {
+    this.syncStoryDraftFromPanel();
+    const handoff: ClientPreviewHandoff = {
+      version: 1,
+      source: "editor",
+      timestamp: Date.now(),
+      campaignId: this.campaign.id,
+      startLevelId: this.state.levelId,
+      content: this.editorPreviewBundle()
+    };
+    localStorage.setItem(editorProjectStorageKey, this.editorJson());
+    localStorage.setItem(clientPreviewStorageKey, JSON.stringify(handoff));
+    localStorage.removeItem(clientSaveStorageKey(this.campaign.id));
+    const url = new URL("client.html", window.location.href);
+    url.searchParams.set("preview", "editor");
+    url.searchParams.set("level", this.state.levelId);
+    url.searchParams.set("t", String(handoff.timestamp));
+    window.location.href = url.href;
   }
 
   private levelOptions(selectedId: string, includeEnd = false): string {
@@ -1461,13 +1551,14 @@ export class EditorApp {
   private readStoryDraft(): StoryBeat {
     this.syncStoryDraftFromPanel();
     const draft = this.state.storyDraft;
-    return {
-      id: `story-${Date.now()}`,
+    const storyBeat: StoryBeat = {
+      id: draft.editingId || `story-${Date.now()}`,
       trigger: draft.trigger,
       presentation: draft.presentation,
       title: draft.title.trim(),
       speaker: draft.speaker.trim(),
       text: draft.text.trim() || "New story beat",
+      avatarUrl: draft.avatarUrl.trim(),
       ...(draft.trigger === "tileEnter"
         ? {
             x: Math.round(numberOrFallback(draft.x, this.state.selected?.x ?? 0)),
@@ -1475,6 +1566,7 @@ export class EditorApp {
           }
         : {})
     };
+    return storyBeat.avatarUrl ? storyBeat : { ...storyBeat, avatarUrl: "" };
   }
 
   private syncStoryDraftFromPanel(): void {
@@ -1482,17 +1574,20 @@ export class EditorApp {
     const presentationInput = this.panel.querySelector<HTMLSelectElement>("[data-story='presentation']");
     const titleInput = this.panel.querySelector<HTMLInputElement>("[data-story='title']");
     const speakerInput = this.panel.querySelector<HTMLInputElement>("[data-story='speaker']");
+    const avatarInput = this.panel.querySelector<HTMLInputElement>("[data-story='avatarUrl']");
     const textInput = this.panel.querySelector<HTMLTextAreaElement>("[data-story='text']");
     const xInput = this.panel.querySelector<HTMLInputElement>("[data-story='x']");
     const zInput = this.panel.querySelector<HTMLInputElement>("[data-story='z']");
     const trigger = triggerInput?.value === "tileEnter" || triggerInput?.value === "levelComplete" ? triggerInput.value : "levelStart";
     const presentation = presentationInput?.value === "screen" ? "screen" : "dialog";
     this.state.storyDraft = {
+      editingId: this.state.storyDraft.editingId,
       trigger,
       presentation,
       title: titleInput?.value ?? this.state.storyDraft.title,
       speaker: speakerInput?.value ?? this.state.storyDraft.speaker,
       text: textInput?.value ?? this.state.storyDraft.text,
+      avatarUrl: avatarInput?.value ?? this.state.storyDraft.avatarUrl,
       x: Math.max(0, Math.round(numberOrFallback(xInput?.value, this.state.storyDraft.x))),
       z: Math.max(0, Math.round(numberOrFallback(zInput?.value, this.state.storyDraft.z)))
     };
@@ -1825,11 +1920,11 @@ export class EditorApp {
             </select>
           </label>
           <label class="field">
-            <span>Tile X</span>
+            <span>Tile X (left to right)</span>
             <input data-story="x" type="number" min="0" max="${Math.max(0, level.width - 1)}" step="1" value="${storyDraft.x}">
           </label>
           <label class="field">
-            <span>Tile Z</span>
+            <span>Tile Z (back to front)</span>
             <input data-story="z" type="number" min="0" max="${Math.max(0, level.depth - 1)}" step="1" value="${storyDraft.z}">
           </label>
           <label class="field">
@@ -1840,10 +1935,25 @@ export class EditorApp {
             <span>Speaker</span>
             <input data-story="speaker" type="text" placeholder="Optional speaker" value="${escapeHtml(storyDraft.speaker)}">
           </label>
+          <label class="field">
+            <span>Avatar URL</span>
+            <input data-story="avatarUrl" type="text" placeholder="Optional portrait image URL" value="${escapeHtml(storyDraft.avatarUrl)}">
+          </label>
+        </div>
+        <div class="story-avatar-editor">
+          <div class="story-avatar-preview">
+            ${storyDraft.avatarUrl ? `<img src="${escapeHtml(storyDraft.avatarUrl)}" alt="">` : `<span>${escapeHtml((storyDraft.speaker || "CH").slice(0, 2).toUpperCase())}</span>`}
+          </div>
+          <div>
+            <strong>${storyDraft.editingId ? "Editing Story Beat" : "New Story Beat"}</strong>
+            <span>Upload an optional speaker portrait, or paste an image URL.</span>
+          </div>
+          <input data-story-avatar type="file" accept="image/*">
+          <button data-action="clear-story-avatar" ${storyDraft.avatarUrl ? "" : "disabled"}>Clear Avatar</button>
         </div>
         <div class="story-picker">
           <strong>Tile target</strong>
-          <span>${storyDraft.trigger === "tileEnter" ? `Tile ${storyDraft.x}, ${storyDraft.z}` : "Only used when Trigger is Tile Enter."}</span>
+          <span>${storyDraft.trigger === "tileEnter" ? `Tile ${storyDraft.x}, ${storyDraft.z} selected. Origin 0,0 is the back-left tile from the default camera.` : "Only used when Trigger is Tile Enter."}</span>
           <div class="button-row two">
             <button data-action="pick-story-tile">Pick Tile</button>
             <button data-action="use-selected-story-tile" ${this.state.selected ? "" : "disabled"}>Use Selected Tile</button>
@@ -1853,16 +1963,23 @@ export class EditorApp {
           <span>Story Text</span>
           <textarea class="story-textarea" data-story="text" placeholder="What happens here?">${escapeHtml(storyDraft.text)}</textarea>
         </label>
-        <button data-action="add-story">Add Story Beat</button>
+        <div class="button-row two">
+          <button data-action="add-story">${storyDraft.editingId ? "Update Story Beat" : "Add Story Beat"}</button>
+          <button data-action="new-story-draft" ${storyDraft.editingId ? "" : "disabled"}>New Story Beat</button>
+        </div>
         <div class="story-list">
           ${level.story
             .map(
               (beat) => `
-                <div class="story-item">
+                <div class="story-item ${storyDraft.editingId === beat.id ? "active" : ""}">
+                  <div class="story-item-avatar">
+                    ${beat.avatarUrl ? `<img src="${escapeHtml(beat.avatarUrl)}" alt="">` : `<span>${escapeHtml((beat.speaker || beat.title || "ST").slice(0, 2).toUpperCase())}</span>`}
+                  </div>
                   <div>
                     <strong>${escapeHtml(beat.title || beat.speaker || beat.presentation)}</strong>
                     <span>${escapeHtml(beat.trigger)}${beat.trigger === "tileEnter" ? ` @ ${beat.x}, ${beat.z}` : ""} / ${escapeHtml(beat.text)}</span>
                   </div>
+                  <button data-action="edit-story" data-story-id="${escapeHtml(beat.id)}" title="Edit story beat" aria-label="Edit story beat">Edit</button>
                   <button data-action="remove-story" data-story-id="${escapeHtml(beat.id)}" title="Remove story beat" aria-label="Remove story beat">&times;</button>
                 </div>
               `
@@ -2339,6 +2456,10 @@ export class EditorApp {
       input.addEventListener("change", () => this.handleBackgroundModelUpload(input));
     });
 
+    this.panel.querySelectorAll<HTMLInputElement>("[data-story-avatar]").forEach((input) => {
+      input.addEventListener("change", () => this.handleStoryAvatarUpload(input));
+    });
+
     this.panel.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>("[data-story]").forEach((input) => {
       input.addEventListener("input", () => this.syncStoryDraftFromPanel());
       input.addEventListener("change", () => {
@@ -2533,9 +2654,34 @@ export class EditorApp {
     reader.readAsDataURL(file);
   }
 
+  private handleStoryAvatarUpload(input: HTMLInputElement): void {
+    const file = input.files?.[0];
+    if (!file) {
+      return;
+    }
+    if (!file.type.startsWith("image/")) {
+      this.flash("Story avatar upload needs an image file.");
+      return;
+    }
+    const reader = new FileReader();
+    reader.addEventListener("load", () => {
+      this.syncStoryDraftFromPanel();
+      this.state.storyDraft = {
+        ...this.state.storyDraft,
+        avatarUrl: String(reader.result ?? "")
+      };
+      this.updatePanel();
+      this.flash(`Loaded avatar ${file.name}.`);
+    });
+    reader.addEventListener("error", () => {
+      this.flash("Story avatar upload failed.");
+    });
+    reader.readAsDataURL(file);
+  }
+
   private handleAction(action: string, storyId?: string): void {
     if (action === "open-client") {
-      window.location.href = new URL("client.html", window.location.href).href;
+      this.openClientPreview();
     } else if (action === "toggle-mode") {
       this.state.mode = this.state.mode === "editor" ? "play" : "editor";
       this.scene.setMode(this.state.mode);
@@ -2712,16 +2858,43 @@ export class EditorApp {
       } else {
         this.flash("Select a tile first, then use it for the story beat.");
       }
+    } else if (action === "clear-story-avatar") {
+      this.syncStoryDraftFromPanel();
+      this.state.storyDraft = {
+        ...this.state.storyDraft,
+        avatarUrl: ""
+      };
+      this.updatePanel();
+      this.flash("Cleared story avatar.");
+    } else if (action === "new-story-draft") {
+      this.state.storyDraft = this.emptyStoryDraft();
+      this.updatePanel();
+      this.flash("Ready for a new story beat.");
+    } else if (action === "edit-story" && storyId) {
+      const beat = this.currentLevel().story.find((candidate) => candidate.id === storyId);
+      if (beat) {
+        this.state.storyDraft = this.storyDraftFromBeat(beat);
+        if (beat.trigger === "tileEnter" && beat.x !== undefined && beat.z !== undefined) {
+          this.state.selected = { x: beat.x, z: beat.z };
+          this.scene.setSelected(this.state.selected);
+        }
+        this.updatePanel();
+        this.flash("Loaded story beat for editing.");
+      }
     } else if (action === "add-story") {
       const level = this.currentLevel();
       const storyBeat = this.readStoryDraft();
+      const isEditing = Boolean(this.state.storyDraft.editingId);
       const next = {
         ...level,
-        story: [...level.story, storyBeat]
+        story: isEditing
+          ? level.story.map((beat) => (beat.id === storyBeat.id ? storyBeat : beat))
+          : [...level.story, storyBeat]
       };
       this.setCurrentLevel(next);
+      this.state.storyDraft = this.storyDraftFromBeat(storyBeat);
       this.updatePanel();
-      this.flash(storyBeat.trigger === "tileEnter" ? `Added story beat at ${storyBeat.x}, ${storyBeat.z}.` : "Added story beat.");
+      this.flash(`${isEditing ? "Updated" : "Added"} story beat${storyBeat.trigger === "tileEnter" ? ` at ${storyBeat.x}, ${storyBeat.z}` : ""}.`);
     } else if (action === "remove-story" && storyId) {
       const level = this.currentLevel();
       const next = {
@@ -2729,6 +2902,9 @@ export class EditorApp {
         story: level.story.filter((beat) => beat.id !== storyId)
       };
       this.setCurrentLevel(next);
+      if (this.state.storyDraft.editingId === storyId) {
+        this.state.storyDraft = this.emptyStoryDraft();
+      }
       this.updatePanel();
       this.flash("Removed story beat.");
     } else if (action === "duplicate-level") {
@@ -2764,15 +2940,7 @@ export class EditorApp {
       this.state.terrain = this.environmentMaterials[0].id;
       this.state.obstacle = this.propDefinitions[0].id;
       this.state.propRotationSteps = 0;
-      this.state.storyDraft = {
-        trigger: "levelStart",
-        presentation: "dialog",
-        title: "",
-        speaker: "",
-        text: "",
-        x: 0,
-        z: 0
-      };
+      this.state.storyDraft = this.emptyStoryDraft();
       this.state.selected = undefined;
       this.scene.setClassDefinitions(this.classDefinitions);
       this.scene.setEnvironmentMaterials(this.environmentMaterials);

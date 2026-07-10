@@ -24,6 +24,7 @@ import type {
   UnitConditionState,
   UnitData
 } from "../game/schema";
+import { clientSaveStorageKey } from "../game/storage";
 import { LevelScene } from "../render/LevelScene";
 
 const sectionNames: SectionName[] = ["head", "body", "legs"];
@@ -97,10 +98,11 @@ export interface ClientBundle {
 }
 
 export interface ClientSaveData {
-  version: 1 | 2;
+  version: 1 | 2 | 3;
   campaignId: string;
   currentLevelId: string;
   shownStory: string[];
+  contentStamp?: string;
   round?: number;
   levels?: LevelData[];
   selectedUnitId?: string;
@@ -130,6 +132,12 @@ export interface ClientAppOptions {
   onAchievement?: (achievementId: string) => void | Promise<void>;
 }
 
+export interface ClientLoadOptions {
+  startLevelId?: string;
+  clearSave?: boolean;
+  titleMessage?: string;
+}
+
 function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (character) => {
     const entities: Record<string, string> = {
@@ -144,6 +152,8 @@ function escapeHtml(value: string): string {
 }
 
 function normalizeLevel(level: LevelData): LevelData {
+  const width = Math.max(1, numberOrFallback(level.width, 1));
+  const depth = Math.max(1, numberOrFallback(level.depth, 1));
   return {
     ...level,
     environment: {
@@ -178,7 +188,26 @@ function normalizeLevel(level: LevelData): LevelData {
       : [],
     objectives: Array.isArray(level.objectives) ? level.objectives : [],
     links: Array.isArray(level.links) ? level.links : [],
-    story: Array.isArray(level.story) ? level.story : []
+    story: Array.isArray(level.story)
+      ? level.story.map((beat, index) => {
+          const trigger = beat.trigger === "tileEnter" || beat.trigger === "levelComplete" ? beat.trigger : "levelStart";
+          return {
+            id: String(beat.id || `story-${index + 1}`),
+            trigger,
+            presentation: beat.presentation === "screen" ? "screen" : "dialog",
+            title: String(beat.title ?? ""),
+            speaker: String(beat.speaker ?? ""),
+            text: String(beat.text || "New story beat"),
+            avatarUrl: typeof beat.avatarUrl === "string" ? beat.avatarUrl : "",
+            ...(trigger === "tileEnter"
+              ? {
+                  x: Math.max(0, Math.min(width - 1, Math.round(numberOrFallback(beat.x, 0)))),
+                  z: Math.max(0, Math.min(depth - 1, Math.round(numberOrFallback(beat.z, 0))))
+                }
+              : {})
+          };
+        })
+      : []
   };
 }
 
@@ -190,6 +219,58 @@ function isLevel(value: unknown): value is LevelData {
 function isCampaign(value: unknown): value is CampaignData {
   const candidate = value as Partial<CampaignData> | undefined;
   return Boolean(candidate && typeof candidate.id === "string" && typeof candidate.startLevel === "string" && Array.isArray(candidate.levels));
+}
+
+function hashString(value: string): string {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+function contentStampFor(campaign: CampaignData, levels: LevelData[]): string {
+  const payload = {
+    campaign: {
+      id: campaign.id,
+      title: campaign.title,
+      startLevel: campaign.startLevel,
+      levels: campaign.levels.map((level) => ({
+        id: level.id,
+        next: level.next
+      }))
+    },
+    levels: levels.map((level) => ({
+      id: level.id,
+      name: level.name,
+      width: level.width,
+      depth: level.depth,
+      objectives: level.objectives,
+      links: level.links,
+      units: level.units.map((unit) => ({
+        id: unit.id,
+        team: unit.team,
+        templateId: unit.templateId,
+        x: unit.x,
+        z: unit.z,
+        hp: unit.hp,
+        faces: unit.faces
+      })),
+      story: level.story.map((beat) => ({
+        id: beat.id,
+        trigger: beat.trigger,
+        presentation: beat.presentation,
+        title: beat.title,
+        speaker: beat.speaker,
+        text: beat.text,
+        avatar: beat.avatarUrl ? hashString(beat.avatarUrl) : "",
+        x: beat.x,
+        z: beat.z
+      }))
+    }))
+  };
+  return hashString(JSON.stringify(payload));
 }
 
 function objectiveLabel(level: LevelData): string {
@@ -224,6 +305,7 @@ export class ClientApp {
   private environmentMaterials: EnvironmentMaterialDefinition[] = structuredClone(defaultEnvironmentMaterials);
   private propDefinitions: PropDefinition[] = structuredClone(defaultPropDefinitions);
   private currentLevelId = this.campaign.startLevel;
+  private contentStamp = contentStampFor(this.campaign, this.levels);
   private storyQueue: StoryBeat[] = [];
   private shownStory = new Set<string>();
   private advancingAfterStory = false;
@@ -336,7 +418,7 @@ export class ClientApp {
     this.fileInput.addEventListener("change", () => void this.loadFiles(this.fileInput.files));
   }
 
-  loadContent(content: unknown | unknown[]): boolean {
+  loadContent(content: unknown | unknown[], options: ClientLoadOptions = {}): boolean {
     try {
       const documents = Array.isArray(content) && content.every(isLevel) ? content : Array.isArray(content) ? content : [content];
       const incomingLevels: LevelData[] = [];
@@ -394,18 +476,36 @@ export class ClientApp {
       this.scene.setClassDefinitions(this.classDefinitions);
       this.scene.setEnvironmentMaterials(this.environmentMaterials);
       this.scene.setPropDefinitions(this.propDefinitions);
+      const requestedStartId = options.startLevelId;
+      const startId = requestedStartId && this.levels.some((level) => level.id === requestedStartId)
+        ? requestedStartId
+        : this.levels.some((level) => level.id === this.campaign.startLevel)
+          ? this.campaign.startLevel
+          : this.levels[0].id;
+      this.campaign = {
+        ...this.campaign,
+        startLevel: startId,
+        titleScreen: {
+          ...titleScreenSettings(this.campaign),
+          ...(this.campaign.titleScreen ?? {}),
+          backgroundLevelId: this.levels.some((level) => level.id === this.campaign.titleScreen?.backgroundLevelId)
+            ? this.campaign.titleScreen!.backgroundLevelId
+            : startId
+        }
+      };
+      this.contentStamp = contentStampFor(this.campaign, this.levels);
+      if (options.clearSave) {
+        this.clearLocalSave();
+      }
       this.storyQueue = [];
       this.shownStory.clear();
       this.turnStates.clear();
       this.round = 1;
       this.inspectedCoord = undefined;
-      const startId = this.levels.some((level) => level.id === this.campaign.startLevel)
-        ? this.campaign.startLevel
-        : this.levels[0].id;
       this.started = true;
       this.currentLevelId = startId;
       this.loadLevel(startId, { showStory: false });
-      this.showTitleScreen();
+      this.showTitleScreen(options.titleMessage);
       return true;
     } catch (error) {
       this.showError(error instanceof Error ? error.message : "Unable to read campaign data.");
@@ -415,10 +515,11 @@ export class ClientApp {
 
   exportSave(): ClientSaveData {
     return {
-      version: 2,
+      version: 3,
       campaignId: this.campaign.id,
       currentLevelId: this.currentLevelId,
       shownStory: [...this.shownStory],
+      contentStamp: this.contentStamp,
       round: this.round,
       levels: this.levels.map((level) => structuredClone(level)),
       selectedUnitId: this.selectedUnitId,
@@ -465,13 +566,18 @@ export class ClientApp {
   }
 
   private isCompatibleSave(save: ClientSaveData): boolean {
-    const isKnownVersion = save.version === 1 || save.version === 2;
+    const isKnownVersion = save.version === 1 || save.version === 2 || save.version === 3;
     const savedLevelsContainCurrent = save.levels?.some((level) => isLevel(level) && level.id === save.currentLevelId) ?? false;
-    return isKnownVersion && save.campaignId === this.campaign.id && (savedLevelsContainCurrent || this.levels.some((level) => level.id === save.currentLevelId));
+    return (
+      isKnownVersion &&
+      save.campaignId === this.campaign.id &&
+      save.contentStamp === this.contentStamp &&
+      (savedLevelsContainCurrent || this.levels.some((level) => level.id === save.currentLevelId))
+    );
   }
 
   private saveSlotKey(): string {
-    return `craft-heroes-client-save:${this.campaign.id}`;
+    return clientSaveStorageKey(this.campaign.id);
   }
 
   private readLocalSave(): ClientSaveData | undefined {
@@ -1855,11 +1961,14 @@ export class ClientApp {
     const isScreen = beat.presentation === "screen";
     this.storyLayer.className = `story-layer open ${isScreen ? "story-screen" : "story-dialog"}`;
     this.storyLayer.innerHTML = `
-      <div class="story-panel">
-        ${beat.speaker ? `<span class="story-speaker">${escapeHtml(beat.speaker)}</span>` : ""}
-        ${beat.title ? `<h2>${escapeHtml(beat.title)}</h2>` : ""}
-        <p>${escapeHtml(beat.text)}</p>
-        <button data-story-continue>Continue</button>
+      <div class="story-panel ${beat.avatarUrl ? "story-panel-with-avatar" : ""}">
+        ${beat.avatarUrl ? `<img class="story-avatar" src="${escapeHtml(beat.avatarUrl)}" alt="${escapeHtml(beat.speaker || beat.title || "Story speaker")}">` : ""}
+        <div class="story-copy">
+          ${beat.speaker ? `<span class="story-speaker">${escapeHtml(beat.speaker)}</span>` : ""}
+          ${beat.title ? `<h2>${escapeHtml(beat.title)}</h2>` : ""}
+          <p>${escapeHtml(beat.text)}</p>
+          <button data-story-continue>Continue</button>
+        </div>
       </div>
     `;
     this.storyLayer.querySelector<HTMLButtonElement>("[data-story-continue]")?.addEventListener("click", () => {
