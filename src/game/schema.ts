@@ -113,7 +113,9 @@ export interface PropDefinition {
   lightColor: string;
   lightIntensity: number;
   lightRange: number;
+  lightOffsetX: number;
   lightOffsetY: number;
+  lightOffsetZ: number;
   color: string;
   textureUrl: string;
   modelUrl: string;

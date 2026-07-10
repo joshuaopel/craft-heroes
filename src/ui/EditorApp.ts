@@ -386,7 +386,9 @@ function normalizePropDefinition(prop: Partial<PropDefinition>): PropDefinition 
     lightColor: isHexColor(prop.lightColor) ? prop.lightColor : fallback.lightColor || "#ffb85c",
     lightIntensity: Math.max(0, Math.min(8, numberOrFallback(prop.lightIntensity, fallback.lightIntensity ?? 1.4))),
     lightRange: Math.max(0.5, Math.min(16, numberOrFallback(prop.lightRange, fallback.lightRange ?? 4))),
+    lightOffsetX: Math.max(-3, Math.min(3, numberOrFallback(prop.lightOffsetX, fallback.lightOffsetX ?? 0))),
     lightOffsetY: Math.max(0, Math.min(5, numberOrFallback(prop.lightOffsetY, fallback.lightOffsetY ?? fallback.height))),
+    lightOffsetZ: Math.max(-3, Math.min(3, numberOrFallback(prop.lightOffsetZ, fallback.lightOffsetZ ?? 0))),
     color: prop.color || fallback.color,
     textureUrl: typeof prop.textureUrl === "string" ? prop.textureUrl : "",
     modelUrl: typeof prop.modelUrl === "string" ? prop.modelUrl : "",
@@ -1523,7 +1525,9 @@ export class EditorApp {
     const lightColorInput = this.panel.querySelector<HTMLInputElement>("[data-prop='lightColor']");
     const lightIntensityInput = this.panel.querySelector<HTMLInputElement>("[data-prop='lightIntensity']");
     const lightRangeInput = this.panel.querySelector<HTMLInputElement>("[data-prop='lightRange']");
+    const lightOffsetXInput = this.panel.querySelector<HTMLInputElement>("[data-prop='lightOffsetX']");
     const lightOffsetYInput = this.panel.querySelector<HTMLInputElement>("[data-prop='lightOffsetY']");
+    const lightOffsetZInput = this.panel.querySelector<HTMLInputElement>("[data-prop='lightOffsetZ']");
     const notesInput = this.panel.querySelector<HTMLInputElement>("[data-prop='notes']");
     return normalizePropDefinition({
       ...fallback,
@@ -1544,7 +1548,9 @@ export class EditorApp {
       lightColor: lightColorInput?.value || fallback.lightColor,
       lightIntensity: numberOrFallback(lightIntensityInput?.value, fallback.lightIntensity),
       lightRange: numberOrFallback(lightRangeInput?.value, fallback.lightRange),
+      lightOffsetX: numberOrFallback(lightOffsetXInput?.value, fallback.lightOffsetX),
       lightOffsetY: numberOrFallback(lightOffsetYInput?.value, fallback.lightOffsetY),
+      lightOffsetZ: numberOrFallback(lightOffsetZInput?.value, fallback.lightOffsetZ),
       notes: textToConditions(notesInput?.value ?? conditionsToText(fallback.notes))
     });
   }
@@ -2389,7 +2395,7 @@ export class EditorApp {
         </label>
         <label class="check-row">
           <input data-prop="emitsLight" type="checkbox" ${currentProp.emitsLight ? "checked" : ""}>
-          <span>Emit light from this prop; GLBs use emissive materials or named markers when present.</span>
+          <span>Emit a manually positioned point light; GLB emissive or named meshes stay visual.</span>
         </label>
         <div class="compact-grid">
           <label class="field">
@@ -2405,8 +2411,16 @@ export class EditorApp {
             <input data-prop="lightRange" type="number" min="0.5" max="16" step="0.1" value="${currentProp.lightRange}">
           </label>
           <label class="field">
+            <span>Light X</span>
+            <input data-prop="lightOffsetX" type="number" min="-3" max="3" step="0.05" value="${currentProp.lightOffsetX}">
+          </label>
+          <label class="field">
             <span>Light Height</span>
             <input data-prop="lightOffsetY" type="number" min="0" max="5" step="0.05" value="${currentProp.lightOffsetY}">
+          </label>
+          <label class="field">
+            <span>Light Z</span>
+            <input data-prop="lightOffsetZ" type="number" min="-3" max="3" step="0.05" value="${currentProp.lightOffsetZ}">
           </label>
         </div>
         <label class="field">

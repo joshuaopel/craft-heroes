@@ -253,26 +253,26 @@ Prop definition options:
 | Light Color | Color of emitted light. |
 | Light Intensity | Brightness of emitted light. |
 | Light Range | Radius/distance of emitted light. |
-| Light Offset Y | Fallback vertical light position when no emissive GLB material or marker exists. |
+| Light X | Local left/right point-light offset. Rotates with placed prop rotation. |
+| Light Height | Local vertical point-light offset. |
+| Light Z | Local forward/back point-light offset. Rotates with placed prop rotation. |
 | Notes | Freeform tags or author notes. |
 
-GLB light-source priority:
+GLB light behavior:
 
-1. Emissive GLB materials. The renderer places the point light at the center of
-   the emissive mesh or emissive material group.
-2. Named light marker objects.
-3. `Light Offset Y` on the prop definition.
+The actual point light is always placed by the prop's `Light X`, `Light Height`,
+and `Light Z` values. Those offsets are local to the prop, so they rotate with
+the placed object when you use the 90-degree rotate control.
 
-For best alignment, put a small separate mesh on the ember/flame/bulb and give
-that mesh an emissive material in Blender before exporting the GLB. The runtime
-uses that emissive material as the light source and preserves the material as
-the visible glowing part. GLB emitters do not get an extra generated orb.
+Emissive GLB materials and named marker meshes are visual emitters only. They
+can glow, but they do not decide where the point light goes. GLB emitters do not
+get an extra generated orb, which keeps torch flames, lantern bulbs, and crystals
+from showing an unwanted helper sphere.
 
 GLB light marker naming convention:
 
-If no emissive material is found and a prop has **Emits Light** enabled, the
-renderer looks for up to four GLB objects whose names contain one of these
-tokens:
+When a prop has **Emits Light** enabled, the renderer looks for GLB objects whose
+names contain one of these tokens and makes those meshes visually emissive:
 
 ```text
 chlight, light, lightpoint, emit, emitter, emissive, ember, flame, glow
@@ -286,10 +286,9 @@ Lantern_Glow
 CHLight_Flame_01
 ```
 
-When a marker is found, only that marker area is treated as the light source.
-The marker material receives emissive coloring, and the point light is placed at
-the marker position. If no emissive material or marker is found, the prop uses
-`Light Offset Y`.
+When a marker is found, the marker material receives emissive coloring. The
+point light still uses the manual `Light X`, `Light Height`, and `Light Z`
+controls.
 
 Best practices for props:
 
@@ -301,8 +300,10 @@ Best practices for props:
 - Prefer one tile per tactical prop. Use surroundings for large scenic dressing.
 - Prefer actual emissive materials for embers, flames, bulbs, crystals, and
   other visible emitters.
-- Name light-emitting marker objects clearly in Blender when an emissive mesh is
-  not practical.
+- Name light-emitting marker objects clearly in Blender when you want the editor
+  to recolor that mesh from the prop's `Light Color`.
+- Use `Light X`, `Light Height`, and `Light Z` to move the actual point light
+  slightly away from nearby geometry and avoid harsh hotspots.
 
 ## Environment And Surroundings
 

@@ -84,7 +84,9 @@ const fallbackProp: PropDefinition = {
   lightColor: "#ffb85c",
   lightIntensity: 1.4,
   lightRange: 4,
+  lightOffsetX: 0,
   lightOffsetY: 0.72,
+  lightOffsetZ: 0,
   color: "#6c716a",
   textureUrl: "",
   modelUrl: "",
@@ -114,12 +116,6 @@ type TerrainMaterialSet = {
   sideCap: THREE.MeshStandardMaterial;
   sideFull: THREE.MeshStandardMaterial;
   sideHalf: THREE.MeshStandardMaterial;
-};
-type ModelLightSource = {
-  object: THREE.Object3D;
-  position: THREE.Vector3;
-  color?: THREE.Color;
-  fromEmissive: boolean;
 };
 const topUvRotations = [Math.PI / 2, -Math.PI / 2, Math.PI] as const;
 
@@ -1098,10 +1094,8 @@ export class LevelScene {
     proxy.userData = { propId: definition.id, height, clickProxy: includeClickProxy };
     group.add(proxy);
 
-    const usesModelLightMarkers = definition.assetKind === "glb" && Boolean(definition.modelUrl);
-    if (!usesModelLightMarkers) {
-      this.addPropLight(group, definition, resolvedScale, height);
-    }
+    const usesModel = definition.assetKind === "glb" && Boolean(definition.modelUrl);
+    this.addPropLight(group, definition, resolvedScale, height, !usesModel);
 
     if (definition.assetKind === "glb" && definition.modelUrl) {
       void this.loadPropModel(definition).then((source) => {
@@ -1110,12 +1104,9 @@ export class LevelScene {
         }
         const instance = source.clone(true);
         this.prepareModelInstance(instance, definition, resolvedScale);
+        this.prepareModelEmitterVisuals(instance, definition);
         group.add(instance);
-        if (!this.addPropLightsFromModelSources(group, instance, definition, resolvedScale, height)) {
-          this.addPropLight(group, definition, resolvedScale, height, false);
-        }
       }).catch((error) => {
-        this.addPropLight(group, definition, resolvedScale, height, false);
         console.warn(`Unable to load prop model "${definition.name}".`, error);
       });
     }
@@ -1126,94 +1117,12 @@ export class LevelScene {
     if (!definition.emitsLight || definition.lightIntensity <= 0) {
       return;
     }
-    const y = Math.max(0.02, Math.min(propHeight + 1.4, (definition.lightOffsetY || propHeight) * scale));
-    this.addPropLightAt(group, definition, scale, new THREE.Vector3(0, y, 0), undefined, showGlow);
-  }
-
-  private addPropLightsFromModelSources(
-    group: THREE.Group,
-    instance: THREE.Group,
-    definition: PropDefinition,
-    scale: number,
-    propHeight: number
-  ): boolean {
-    if (!definition.emitsLight || definition.lightIntensity <= 0) {
-      return false;
-    }
-
-    const emissiveSources = this.collectEmissiveModelLightSources(group, instance, propHeight);
-    const lightSources = emissiveSources.length > 0
-      ? emissiveSources
-      : this.collectMarkerModelLightSources(group, instance, propHeight);
-    if (lightSources.length === 0) {
-      return false;
-    }
-
-    for (const source of lightSources.slice(0, 4)) {
-      this.addPropLightAt(group, definition, scale, source.position, source.color, false);
-      if (source.fromEmissive) {
-        this.prepareEmissiveSourceMaterial(source.object);
-      } else {
-        this.applyEmitterMaterial(source.object, definition);
-      }
-    }
-    return true;
-  }
-
-  private collectMarkerModelLightSources(group: THREE.Group, instance: THREE.Group, propHeight: number): ModelLightSource[] {
-    const markers: THREE.Object3D[] = [];
-    instance.traverse((child) => {
-      if (markers.length < 4 && this.isGlbLightMarker(child)) {
-        markers.push(child);
-      }
-    });
-
-    group.updateMatrixWorld(true);
-    instance.updateMatrixWorld(true);
-    return markers.map((marker) => ({
-      object: marker,
-      position: this.clampModelLightPosition(group.worldToLocal(marker.getWorldPosition(new THREE.Vector3()).clone()), propHeight),
-      fromEmissive: false
-    }));
-  }
-
-  private collectEmissiveModelLightSources(group: THREE.Group, instance: THREE.Group, propHeight: number): ModelLightSource[] {
-    const sources: ModelLightSource[] = [];
-    group.updateMatrixWorld(true);
-    instance.updateMatrixWorld(true);
-    instance.traverse((child) => {
-      if (sources.length >= 4) {
-        return;
-      }
-      const mesh = child as THREE.Mesh;
-      if (!mesh.isMesh || !mesh.geometry || !mesh.material) {
-        return;
-      }
-      const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-      const emissiveIndexes = materials
-        .map((material, index) => ({ material, index }))
-        .filter(({ material }) => this.isMaterialEmissive(material))
-        .map(({ index }) => index);
-      if (emissiveIndexes.length === 0) {
-        return;
-      }
-      const worldCenter = this.emissiveWorldCenterForMesh(mesh, emissiveIndexes);
-      if (!worldCenter) {
-        return;
-      }
-      sources.push({
-        object: mesh,
-        position: this.clampModelLightPosition(group.worldToLocal(worldCenter.clone()), propHeight),
-        color: this.emissiveColorForMaterials(materials, emissiveIndexes),
-        fromEmissive: true
-      });
-    });
-    return sources;
-  }
-
-  private clampModelLightPosition(position: THREE.Vector3, propHeight: number): THREE.Vector3 {
+    const offsetX = this.clampNumber(definition.lightOffsetX, -3, 3, 0);
+    const offsetY = this.clampNumber(definition.lightOffsetY, 0, 5, propHeight / Math.max(0.001, scale));
+    const offsetZ = this.clampNumber(definition.lightOffsetZ, -3, 3, 0);
+    const position = new THREE.Vector3(offsetX * scale, offsetY * scale, offsetZ * scale);
     position.y = Math.max(0.02, Math.min(propHeight + 1.4, position.y));
-    return position;
+    this.addPropLightAt(group, definition, scale, position, showGlow);
   }
 
   private isMaterialEmissive(material: THREE.Material): boolean {
@@ -1226,81 +1135,36 @@ export class LevelScene {
     );
   }
 
-  private emissiveColorForMaterials(materials: THREE.Material[], emissiveIndexes: number[]): THREE.Color | undefined {
-    const color = new THREE.Color(0, 0, 0);
-    let count = 0;
-    for (const index of emissiveIndexes) {
-      const material = materials[index] as THREE.MeshStandardMaterial | undefined;
-      if (!material) {
-        continue;
-      }
-      if (material.emissive && material.emissive.getHex() !== 0) {
-        color.add(material.emissive);
-        count += 1;
-      } else if (material.color) {
-        color.add(material.color);
-        count += 1;
-      }
-    }
-    return count > 0 ? color.multiplyScalar(1 / count) : undefined;
-  }
-
-  private emissiveWorldCenterForMesh(mesh: THREE.Mesh, emissiveIndexes: number[]): THREE.Vector3 | undefined {
-    const geometry = mesh.geometry as THREE.BufferGeometry | undefined;
-    const position = geometry?.getAttribute("position");
-    if (!geometry || !position) {
-      const box = new THREE.Box3().setFromObject(mesh);
-      return box.isEmpty() ? undefined : box.getCenter(new THREE.Vector3());
-    }
-
-    const emissiveSet = new Set(emissiveIndexes);
-    const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-    const allMaterialsEmissive = materials.every((_, index) => emissiveSet.has(index));
-    if (allMaterialsEmissive || geometry.groups.length === 0) {
-      const box = new THREE.Box3().setFromObject(mesh);
-      return box.isEmpty() ? undefined : box.getCenter(new THREE.Vector3());
-    }
-
-    const index = geometry.getIndex();
-    const localBox = new THREE.Box3();
-    let found = false;
-    const expandByVertex = (vertexIndex: number) => {
-      const point = new THREE.Vector3(position.getX(vertexIndex), position.getY(vertexIndex), position.getZ(vertexIndex));
-      localBox.expandByPoint(point);
-      found = true;
-    };
-
-    for (const geometryGroup of geometry.groups) {
-      if (!emissiveSet.has(geometryGroup.materialIndex ?? 0)) {
-        continue;
-      }
-      const end = geometryGroup.start + geometryGroup.count;
-      for (let cursor = geometryGroup.start; cursor < end; cursor += 1) {
-        expandByVertex(index ? index.getX(cursor) : cursor);
-      }
-    }
-
-    if (!found || localBox.isEmpty()) {
-      const box = new THREE.Box3().setFromObject(mesh);
-      return box.isEmpty() ? undefined : box.getCenter(new THREE.Vector3());
-    }
-    return localBox.getCenter(new THREE.Vector3()).applyMatrix4(mesh.matrixWorld);
-  }
-
-  private prepareEmissiveSourceMaterial(object: THREE.Object3D): void {
-    const mesh = object as THREE.Mesh;
-    if (!mesh.isMesh || !mesh.material) {
+  private prepareModelEmitterVisuals(instance: THREE.Group, definition: PropDefinition): void {
+    if (!definition.emitsLight) {
       return;
     }
 
-    const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-    for (const material of materials) {
-      if (!this.isMaterialEmissive(material)) {
-        continue;
+    instance.traverse((child) => {
+      if (this.isGlbLightMarker(child)) {
+        this.applyEmitterMaterial(child, definition);
+        return;
       }
-      material.toneMapped = false;
-      material.needsUpdate = true;
-    }
+
+      const mesh = child as THREE.Mesh;
+      if (!mesh.isMesh || !mesh.material) {
+        return;
+      }
+      const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      for (const material of materials) {
+        if (!this.isMaterialEmissive(material)) {
+          continue;
+        }
+        material.toneMapped = false;
+        material.needsUpdate = true;
+      }
+    });
+  }
+
+  private clampNumber(value: unknown, min: number, max: number, fallback: number): number {
+    const numberValue = Number(value);
+    const resolved = Number.isFinite(numberValue) ? numberValue : fallback;
+    return Math.max(min, Math.min(max, resolved));
   }
 
   private isGlbLightMarker(object: THREE.Object3D): boolean {
@@ -1312,11 +1176,11 @@ export class LevelScene {
     return tokens.some((token) => glbLightMarkerTokens.has(token));
   }
 
-  private addPropLightAt(group: THREE.Group, definition: PropDefinition, scale: number, position: THREE.Vector3, colorOverride?: THREE.Color, showGlow = true): void {
+  private addPropLightAt(group: THREE.Group, definition: PropDefinition, scale: number, position: THREE.Vector3, showGlow = true): void {
     if (!definition.emitsLight || definition.lightIntensity <= 0) {
       return;
     }
-    const color = colorOverride?.clone() ?? new THREE.Color(definition.lightColor || "#ffb85c");
+    const color = new THREE.Color(definition.lightColor || "#ffb85c");
     const light = new THREE.PointLight(color, definition.lightIntensity, definition.lightRange, 1.65);
     light.position.copy(position);
     group.add(light);
@@ -1340,23 +1204,27 @@ export class LevelScene {
   }
 
   private applyEmitterMaterial(marker: THREE.Object3D, definition: PropDefinition): void {
-    const mesh = marker as THREE.Mesh;
-    if (!mesh.isMesh || !mesh.material) {
-      return;
-    }
-
     const color = new THREE.Color(definition.lightColor || "#ffb85c");
     const intensity = Math.max(0.4, definition.lightIntensity * 0.6);
-    const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-    for (const material of materials) {
-      const emissiveMaterial = material as THREE.MeshStandardMaterial;
-      if (emissiveMaterial.emissive) {
-        emissiveMaterial.emissive.copy(color);
-        emissiveMaterial.emissiveIntensity = intensity;
+
+    marker.traverse((child) => {
+      const mesh = child as THREE.Mesh;
+      if (!mesh.isMesh || !mesh.material) {
+        return;
       }
-      material.toneMapped = false;
-      material.needsUpdate = true;
-    }
+      const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      for (const material of materials) {
+        const emissiveMaterial = material as THREE.MeshStandardMaterial;
+        if (emissiveMaterial.emissive) {
+          emissiveMaterial.emissive.copy(color);
+          emissiveMaterial.emissiveIntensity = intensity;
+        } else if ("color" in material && material.color instanceof THREE.Color) {
+          material.color.copy(color);
+        }
+        material.toneMapped = false;
+        material.needsUpdate = true;
+      }
+    });
   }
 
   private shouldPropSway(definition: PropDefinition): boolean {
