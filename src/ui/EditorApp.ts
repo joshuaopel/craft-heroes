@@ -24,6 +24,7 @@ import {
 import type {
   AbilityDefinition,
   AbilityTrigger,
+  AIBehavior,
   CampaignData,
   ClassDefinition,
   ClassId,
@@ -48,6 +49,7 @@ import type {
   TerrainType,
   TitleScreenSettings,
   TileCoord,
+  UnitData,
   UnitTemplate
 } from "../game/schema";
 import {
@@ -62,6 +64,11 @@ const directionLabels = ["S", "E", "N", "W"] as const;
 const sectionNames: SectionName[] = ["head", "body", "legs"];
 const abilityTriggers: AbilityTrigger[] = ["active", "passive", "onMove", "onAttack", "onDefend", "onSupport"];
 const conditionKinds: ConditionKind[] = ["buff", "debuff", "trap", "status"];
+const aiBehaviors: Array<{ id: AIBehavior; label: string; summary: string }> = [
+  { id: "straight-offense", label: "Straight Offense", summary: "Attack, advance, attack again." },
+  { id: "cautionary-cycle", label: "Cautionary Cycle", summary: "Attack, defend, attack." },
+  { id: "avoidance-cycle", label: "Avoidance Cycle", summary: "Avoid, attack, defend, avoid." }
+];
 const statFields: Array<{ key: keyof ClassSectionStats; label: string }> = [
   { key: "attack", label: "ATK" },
   { key: "defense", label: "DEF" },
@@ -166,6 +173,16 @@ function readStoredJson<T>(key: string): T | undefined {
 function numberOrFallback(value: unknown, fallback: number): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function normalizeAIBehavior(value: unknown): AIBehavior {
+  return aiBehaviors.some((behavior) => behavior.id === value) ? (value as AIBehavior) : "straight-offense";
+}
+
+function normalizeInitiativeOrder(units: UnitData[], order: unknown): string[] {
+  const unitIds = units.map((unit) => unit.id);
+  const existing = Array.isArray(order) ? order.map(String).filter((unitId) => unitIds.includes(unitId)) : [];
+  return [...existing, ...unitIds.filter((unitId) => !existing.includes(unitId))];
 }
 
 function normalizeStats(stats: Partial<ClassSectionStats> | undefined): ClassSectionStats {
@@ -416,6 +433,20 @@ function normalizeStoryBeat(beat: Partial<StoryBeat>, index: number, width: numb
 }
 
 function normalizeLevelData(level: LevelData): LevelData {
+  const units = Array.isArray(level.units)
+    ? level.units.map((unit) => ({
+        ...unit,
+        aiBehavior: unit.team === "enemy" ? normalizeAIBehavior(unit.aiBehavior) : undefined,
+        conditions: Array.isArray(unit.conditions)
+          ? unit.conditions.map((condition) => ({
+              id: String(condition.id ?? ""),
+              turns: Math.max(0, Math.min(12, numberOrFallback(condition.turns, 0))),
+              stacks: Math.max(1, Math.min(9, numberOrFallback(condition.stacks, 1))),
+              source: condition.source
+            })).filter((condition) => condition.id)
+          : []
+      }))
+    : [];
   return {
     ...level,
     environment: normalizeEnvironment(level.environment),
@@ -426,19 +457,8 @@ function normalizeLevelData(level: LevelData): LevelData {
         }))
       : [],
     surroundings: Array.isArray(level.surroundings) ? level.surroundings : [],
-    units: Array.isArray(level.units)
-      ? level.units.map((unit) => ({
-          ...unit,
-          conditions: Array.isArray(unit.conditions)
-            ? unit.conditions.map((condition) => ({
-                id: String(condition.id ?? ""),
-                turns: Math.max(0, Math.min(12, numberOrFallback(condition.turns, 0))),
-                stacks: Math.max(1, Math.min(9, numberOrFallback(condition.stacks, 1))),
-                source: condition.source
-              })).filter((condition) => condition.id)
-            : []
-        }))
-      : [],
+    units,
+    initiativeOrder: normalizeInitiativeOrder(units, level.initiativeOrder),
     story: Array.isArray(level.story)
       ? level.story.map((beat, index) => normalizeStoryBeat(beat, index, level.width, level.depth))
       : []
@@ -772,6 +792,23 @@ export class EditorApp {
 
   private selectedProp(): PropDefinition {
     return this.propDefinitions.find((prop) => prop.id === this.state.obstacle) ?? this.propDefinitions[0];
+  }
+
+  private selectedUnit(level = this.currentLevel()): UnitData | undefined {
+    if (!this.state.selected) {
+      return undefined;
+    }
+    return level.units.find((unit) => unit.x === this.state.selected?.x && unit.z === this.state.selected?.z);
+  }
+
+  private aiBehaviorOptions(selected: AIBehavior = "straight-offense"): string {
+    return aiBehaviors
+      .map((behavior) => `<option value="${behavior.id}" ${behavior.id === selected ? "selected" : ""}>${escapeHtml(behavior.label)}</option>`)
+      .join("");
+  }
+
+  private initiativePosition(level: LevelData, unitId: string): number {
+    return (level.initiativeOrder ?? level.units.map((unit) => unit.id)).indexOf(unitId);
   }
 
   private loadStoredProject(): void {
@@ -1656,6 +1693,71 @@ export class EditorApp {
     this.updatePanel();
   }
 
+  private selectUnitById(unitId: string | undefined): void {
+    if (!unitId) {
+      return;
+    }
+    const level = this.currentLevel();
+    const unit = level.units.find((candidate) => candidate.id === unitId);
+    if (!unit) {
+      return;
+    }
+    this.state.selected = { x: unit.x, z: unit.z };
+    this.scene.setSelected(this.state.selected);
+    this.updatePanel();
+  }
+
+  private moveInitiativeUnit(unitId: string | undefined, direction: -1 | 1): void {
+    if (!unitId) {
+      return;
+    }
+    const level = this.currentLevel();
+    const order = normalizeInitiativeOrder(level.units, level.initiativeOrder);
+    const index = order.indexOf(unitId);
+    const nextIndex = index + direction;
+    if (index < 0 || nextIndex < 0 || nextIndex >= order.length) {
+      return;
+    }
+    [order[index], order[nextIndex]] = [order[nextIndex], order[index]];
+    const next = {
+      ...level,
+      initiativeOrder: order
+    };
+    this.setCurrentLevel(next);
+    this.scene.setLevel(next);
+    this.selectUnitById(unitId);
+    this.flash("Updated initiative order.");
+  }
+
+  private updateSelectedUnitBehavior(unitId: string | undefined, value: string): void {
+    if (!unitId) {
+      return;
+    }
+    const level = this.currentLevel();
+    const behavior = normalizeAIBehavior(value);
+    let updated = false;
+    const next = {
+      ...level,
+      units: level.units.map((unit) => {
+        if (unit.id !== unitId || unit.team !== "enemy") {
+          return unit;
+        }
+        updated = true;
+        return {
+          ...unit,
+          aiBehavior: behavior
+        };
+      })
+    };
+    if (!updated) {
+      return;
+    }
+    this.setCurrentLevel(next);
+    this.scene.setLevel(next);
+    this.updatePanel();
+    this.flash(`Set AI behavior to ${aiBehaviors.find((candidate) => candidate.id === behavior)?.label ?? behavior}.`);
+  }
+
   private handleTileClick(coord: TileCoord): void {
     this.state.selected = coord;
     if (this.state.mode === "play") {
@@ -1706,6 +1808,10 @@ export class EditorApp {
     const selectedObstacle = this.state.selected
       ? level.obstacles.find((obstacle) => obstacle.x === this.state.selected?.x && obstacle.z === this.state.selected?.z)
       : undefined;
+    const selectedUnit = this.selectedUnit(level);
+    const orderedUnits = (level.initiativeOrder ?? level.units.map((unit) => unit.id))
+      .map((unitId) => level.units.find((unit) => unit.id === unitId))
+      .filter((unit): unit is UnitData => Boolean(unit));
     const storyDraft = this.state.storyDraft;
     const json = this.editorJson();
     const libraryCards = [
@@ -1799,6 +1905,60 @@ export class EditorApp {
         <div class="level-card">
           <strong>${this.propRotationLabel()}</strong>
           <span>${selectedObstacle ? "Rotates the selected prop and future placements." : "Applies to future prop placements."}</span>
+        </div>
+      </section>
+
+      <section class="control-section selected-unit-section">
+        <div class="section-title">
+          <strong>Selected Unit</strong>
+          <span>${selectedUnit ? `${escapeHtml(selectedUnit.name)} at ${selectedUnit.x}, ${selectedUnit.z}` : "Click a placed cube to edit behavior and initiative."}</span>
+        </div>
+        ${
+          selectedUnit
+            ? `
+              <div class="selected-unit-card">
+                <div>
+                  <strong>${escapeHtml(selectedUnit.name)}</strong>
+                  <span>${escapeHtml(`${selectedUnit.team} / ${selectedUnit.templateId} / HP ${selectedUnit.hp}`)}</span>
+                </div>
+                <span>${this.initiativePosition(level, selectedUnit.id) + 1} / ${Math.max(1, orderedUnits.length)}</span>
+              </div>
+              ${
+                selectedUnit.team === "enemy"
+                  ? `
+                    <label class="field">
+                      <span>AI Behavior</span>
+                      <select data-selected-unit-behavior data-unit-id="${escapeHtml(selectedUnit.id)}">
+                        ${this.aiBehaviorOptions(normalizeAIBehavior(selectedUnit.aiBehavior))}
+                      </select>
+                    </label>
+                    <div class="level-card subtle-card">
+                      <strong>${escapeHtml(aiBehaviors.find((behavior) => behavior.id === normalizeAIBehavior(selectedUnit.aiBehavior))?.label ?? "Straight Offense")}</strong>
+                      <span>${escapeHtml(aiBehaviors.find((behavior) => behavior.id === normalizeAIBehavior(selectedUnit.aiBehavior))?.summary ?? "")}</span>
+                    </div>
+                  `
+                  : `<div class="level-card subtle-card"><strong>Player Controlled</strong><span>This unit waits for player actions on its initiative turn.</span></div>`
+              }
+            `
+            : `<div class="combat-empty"><strong>No Unit Selected</strong><span>Use Select, then click a player or enemy cube.</span></div>`
+        }
+        <div class="initiative-list">
+          ${orderedUnits
+            .map((unit, index) => {
+              const active = selectedUnit?.id === unit.id;
+              return `
+                <div class="initiative-editor-row ${active ? "active" : ""}">
+                  <button data-action="select-initiative-unit" data-unit-id="${escapeHtml(unit.id)}" title="Select ${escapeHtml(unit.name)}">
+                    <b>${index + 1}</b>
+                    <span>${escapeHtml(unit.name)}</span>
+                    <small>${escapeHtml(unit.team)}${unit.team === "enemy" ? ` / ${escapeHtml(aiBehaviors.find((behavior) => behavior.id === normalizeAIBehavior(unit.aiBehavior))?.label ?? "Straight Offense")}` : ""}</small>
+                  </button>
+                  <button data-action="initiative-up" data-unit-id="${escapeHtml(unit.id)}" ${index === 0 ? "disabled" : ""} title="Move earlier">^</button>
+                  <button data-action="initiative-down" data-unit-id="${escapeHtml(unit.id)}" ${index === orderedUnits.length - 1 ? "disabled" : ""} title="Move later">v</button>
+                </div>
+              `;
+            })
+            .join("")}
         </div>
       </section>
 
@@ -2470,8 +2630,12 @@ export class EditorApp {
       });
     });
 
+    this.panel.querySelectorAll<HTMLSelectElement>("[data-selected-unit-behavior]").forEach((select) => {
+      select.addEventListener("change", () => this.updateSelectedUnitBehavior(select.dataset.unitId, select.value));
+    });
+
     this.panel.querySelectorAll<HTMLButtonElement>("[data-action]").forEach((button) => {
-      button.addEventListener("click", () => this.handleAction(button.dataset.action ?? "", button.dataset.storyId));
+      button.addEventListener("click", () => this.handleAction(button.dataset.action ?? "", button.dataset.storyId, button.dataset.unitId));
     });
 
     const chip = this.root.querySelector("#status-chip");
@@ -2679,7 +2843,7 @@ export class EditorApp {
     reader.readAsDataURL(file);
   }
 
-  private handleAction(action: string, storyId?: string): void {
+  private handleAction(action: string, storyId?: string, unitId?: string): void {
     if (action === "open-client") {
       this.openClientPreview();
     } else if (action === "toggle-mode") {
@@ -2700,6 +2864,12 @@ export class EditorApp {
       this.applyPropRotation(currentSteps + 1);
     } else if (action === "reset-prop-rotation") {
       this.applyPropRotation(0);
+    } else if (action === "select-initiative-unit") {
+      this.selectUnitById(unitId);
+    } else if (action === "initiative-up") {
+      this.moveInitiativeUnit(unitId, -1);
+    } else if (action === "initiative-down") {
+      this.moveInitiativeUnit(unitId, 1);
     } else if (action === "update-build") {
       const draft = this.readBuildDraft();
       this.templates = this.templates.map((template) => (template.id === draft.id ? draft : template));

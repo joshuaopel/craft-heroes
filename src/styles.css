@@ -237,6 +237,99 @@ textarea {
   background: rgba(255, 255, 255, 0.06);
 }
 
+.subtle-card {
+  background: rgba(0, 0, 0, 0.16);
+}
+
+.selected-unit-card {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+  padding: 9px;
+  border: 1px solid rgba(238, 247, 239, 0.12);
+  border-radius: 7px;
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.selected-unit-card div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.selected-unit-card strong {
+  overflow: hidden;
+  font-size: 13px;
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.selected-unit-card span {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.initiative-list {
+  display: grid;
+  gap: 7px;
+}
+
+.initiative-editor-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 32px 32px;
+  gap: 6px;
+  align-items: stretch;
+}
+
+.initiative-editor-row > button:first-child {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 3px 8px;
+  align-items: center;
+  justify-items: start;
+  min-height: 44px;
+  padding: 7px 9px;
+  text-align: left;
+}
+
+.initiative-editor-row.active > button:first-child {
+  border-color: rgba(96, 215, 228, 0.55);
+  background: rgba(31, 86, 92, 0.32);
+}
+
+.initiative-editor-row b {
+  grid-row: span 2;
+  color: var(--accent);
+  font-size: 12px;
+}
+
+.initiative-editor-row span,
+.initiative-editor-row small {
+  overflow: hidden;
+  max-width: 100%;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.initiative-editor-row span {
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.initiative-editor-row small {
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.initiative-editor-row > button:not(:first-child) {
+  min-height: 32px;
+  padding: 0;
+}
+
 .library-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -804,6 +897,18 @@ textarea {
 .combat-panel-head button {
   min-width: 52px;
   padding: 0 10px;
+}
+
+.turn-badge {
+  flex: 0 0 auto;
+  padding: 5px 8px;
+  border: 1px solid rgba(242, 189, 85, 0.38);
+  border-radius: 999px;
+  background: rgba(92, 72, 22, 0.32);
+  color: #f6d58b;
+  font-size: 10px;
+  font-weight: 850;
+  line-height: 1;
 }
 
 .combat-stat-grid {

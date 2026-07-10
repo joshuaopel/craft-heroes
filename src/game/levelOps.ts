@@ -60,6 +60,8 @@ export function resizeLevel(level: LevelData, width: number, depth: number, terr
   );
   next.obstacles = next.obstacles.filter((obstacle) => isInside(next, obstacle));
   next.units = next.units.filter((unit) => isInside(next, unit));
+  const remainingUnitIds = new Set(next.units.map((unit) => unit.id));
+  next.initiativeOrder = (next.initiativeOrder ?? level.units.map((unit) => unit.id)).filter((unitId) => remainingUnitIds.has(unitId));
   return next;
 }
 
@@ -78,25 +80,36 @@ export function placeObstacle(level: LevelData, coord: TileCoord, type: Obstacle
 
 export function placeUnit(level: LevelData, coord: TileCoord, team: Team, template: UnitTemplate): LevelData {
   const next = cloneLevel(level);
+  const removedUnitIds = next.units.filter((unit) => unit.x === coord.x && unit.z === coord.z).map((unit) => unit.id);
+  const id = `${team}-${Date.now()}`;
   next.units = next.units.filter((unit) => unit.x !== coord.x || unit.z !== coord.z);
   next.units.push({
-    id: `${team}-${Date.now()}`,
+    id,
     team,
     templateId: template.id,
     name: team === "player" ? "Player Cube" : template.name,
     x: coord.x,
     z: coord.z,
     hp: template.hp,
+    aiBehavior: team === "enemy" ? "straight-offense" : undefined,
     rotations: { head: 0, body: team === "enemy" ? 2 : 0, legs: 0 },
     faces: structuredClone(template.faces)
   });
+  next.initiativeOrder = [
+    ...(next.initiativeOrder ?? level.units.map((unit) => unit.id)).filter((unitId) => !removedUnitIds.includes(unitId)),
+    id
+  ];
   return next;
 }
 
 export function eraseTileOccupants(level: LevelData, coord: TileCoord): LevelData {
   const next = cloneLevel(level);
+  const removedUnitIds = next.units.filter((unit) => unit.x === coord.x && unit.z === coord.z).map((unit) => unit.id);
   next.obstacles = next.obstacles.filter((obstacle) => obstacle.x !== coord.x || obstacle.z !== coord.z);
   next.units = next.units.filter((unit) => unit.x !== coord.x || unit.z !== coord.z);
+  if (removedUnitIds.length > 0) {
+    next.initiativeOrder = (next.initiativeOrder ?? level.units.map((unit) => unit.id)).filter((unitId) => !removedUnitIds.includes(unitId));
+  }
   return next;
 }
 

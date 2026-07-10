@@ -7,6 +7,7 @@ export type SectionName = "head" | "body" | "legs";
 export type EnvironmentMaterialId = string;
 export type PropDefinitionId = string;
 export type EnvironmentSurfaceEffect = "solid" | "grass" | "water";
+export type AIBehavior = "straight-offense" | "cautionary-cycle" | "avoidance-cycle";
 
 export interface ClassSectionStats {
   attack: number;
@@ -184,6 +185,7 @@ export interface UnitData {
   x: number;
   z: number;
   hp: number;
+  aiBehavior?: AIBehavior;
   rotations: Record<SectionName, number>;
   faces: UnitFaceLayout;
   conditions?: UnitConditionState[];
@@ -235,6 +237,7 @@ export interface LevelData {
   obstacles: ObstacleData[];
   surroundings: SurroundingPropData[];
   units: UnitData[];
+  initiativeOrder?: string[];
   objectives: LevelObjective[];
   links: LevelLink[];
   story: StoryBeat[];

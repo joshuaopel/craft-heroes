@@ -403,7 +403,25 @@ Build workflow:
 2. Set HP.
 3. Assign four class faces for head, body/arms, and legs.
 4. Place the build as player or enemy.
-5. In play, rotate sections independently to expose different class faces.
+5. Click placed enemies to assign their AI behavior.
+6. Reorder the level's initiative list for encounter pacing.
+7. In play, rotate sections independently to expose different class faces.
+
+Enemy behavior options:
+
+| Behavior | Pattern | Best Use |
+| --- | --- | --- |
+| Straight Offense | Attack; advance if needed; guard if no attack is possible. | Basic pressure units and melee guards. |
+| Cautionary Cycle | Attack, defend, attack. | Shielded units, sentries, and enemies that should hold ground. |
+| Avoidance Cycle | Avoid, attack, defend, avoid. | Skirmishers, archers, and enemies that should keep distance. |
+
+Initiative authoring:
+
+- Each level stores `initiativeOrder`, an ordered list of placed unit IDs.
+- Click a unit or its initiative row to inspect it.
+- Use the initiative up/down buttons to choose the exact turn order.
+- Deleted units are removed from the order; newly placed units are appended.
+- The client follows this order directly instead of recalculating it during play.
 
 Best practices:
 
@@ -415,6 +433,8 @@ Best practices:
 - Legs should change map interaction, not just add one point of movement.
 - For enemies, create named builds for the scenario instead of reusing only the
   default templates.
+- Give ranged or fragile enemies Avoidance Cycle so they stop swarming into
+  melee range.
 
 ## Gameplay Rules
 
@@ -423,7 +443,7 @@ Best practices:
 Open **Gameplay Rules** from the editor utility buttons near Level Flow and Title
 Screen.
 
-Initiative options:
+Initiative scoring options:
 
 | Option | Meaning |
 | --- | --- |
@@ -436,7 +456,10 @@ Initiative options:
 | Random Bonus | Deterministic round-based random bonus cap. |
 | Tie Breaker | `player`, `enemy`, or `higherHp`. |
 
-Current initiative formula:
+These values are still useful for tuning class identity and future generated
+orders, but live encounters now use the manual per-level `initiativeOrder`.
+
+Reference initiative formula:
 
 ```text
 base
@@ -640,14 +663,14 @@ Client buttons:
 | Body < / > | Rotates the selected unit's body/arms section. |
 | Legs < / > | Rotates the selected unit's legs section. |
 | Inspect | Shows sight range and line-of-sight details for clicked tiles. |
-| End Turn | Advances the round, resets move/action/twist budgets, and ticks condition durations/effects. |
+| End Turn | Advances the active unit to the next initiative slot. |
 | Resolve | Completes the level if the objective is done. |
 
 HUD areas:
 
 | Area | Meaning |
 | --- | --- |
-| Mission chip | Mission index, round, next initiative leader, level name, objective. |
+| Mission chip | Mission index, round, active initiative unit, level name, objective. |
 | Combat panel | Selected unit HP, height, move/action/twist state, current section faces, action buttons, target line, class stats, and conditions. |
 | Range overlay | Cyan for movement, red for attack, green for support, yellow for sight/inspect. |
 | Footer | Current command, range/stat preview, and recent result text. |
@@ -656,9 +679,18 @@ Current turn budget:
 
 | Budget | Limit | Reset |
 | --- | --- | --- |
-| Move | One move per unit per round. | **End Turn**. |
-| Action | One attack, support, or guard per unit per round. | **End Turn**. |
-| Twists | Two section rotations per unit per round. | **End Turn**. |
+| Move | One move per unit per round. | When initiative wraps to the next round. |
+| Action | One attack, support, or guard per unit per round. | When initiative wraps to the next round. |
+| Twists | Two section rotations per unit per round. | When initiative wraps to the next round. |
+
+Enemy turns:
+
+- Enemy units resolve automatically when their initiative slot becomes active.
+- AI uses the same two-twist limit as players.
+- AI can rotate toward better attack, range, or movement faces before acting.
+- AI movement uses the current prototype movement rule: any valid tile in move
+  range, without full pathfinding or terrain-cost routing yet.
+- AI movement does not trigger story beats.
 
 Targeting notes:
 
@@ -679,7 +711,7 @@ Current objective types:
 
 Current save behavior:
 
-- Client saves use browser local storage by campaign ID and include current round, level state, selected unit, and spent move/action/twist budgets.
+- Client saves use browser local storage by campaign ID and include current round, level state, active initiative slot, AI behavior step state, selected unit, and spent move/action/twist budgets.
 - Saves include a content stamp. If the campaign/story data changes, incompatible
   old saves are ignored instead of restoring stale story beats.
 - `New Game` clears compatible save progress.
@@ -782,6 +814,8 @@ Best practices for the future Electron/Steamworks wrapper:
 - Prop/blocker placement.
 - Prop quarter-turn rotation before placement.
 - Unit placement by team and build.
+- Selected-unit inspector with enemy AI behavior assignment.
+- Manual per-level initiative order editing.
 - Erase tool.
 - Local save/reset sample content.
 - JSON export/import/download/copy.
@@ -802,7 +836,7 @@ Best practices for the future Electron/Steamworks wrapper:
 
 - Title screen with New Game, Continue, Options, and Load Content.
 - Optional title camera orbit and mock battle FX.
-- Mission HUD with objective and initiative leader.
+- Mission HUD with objective and active initiative unit.
 - Combat panel for current head/body/legs faces, section gains, target line, and turn budgets.
 - Active condition chips.
 - Select, Move, Attack, Support, Guard, Rotate Head, Rotate Body, Rotate Legs, Inspect, End Turn,
@@ -815,6 +849,8 @@ Best practices for the future Electron/Steamworks wrapper:
 - Basic line-of-sight blocking and high-ground attack bonus.
 - Buff/debuff/trap/status condition application.
 - Round-end condition ticking.
+- Manual level-authored initiative order.
+- Enemy AI behaviors: Straight Offense, Cautionary Cycle, and Avoidance Cycle.
 - Level start, tile enter, and level complete story beats.
 - Optional story avatars in client story windows.
 - Linear campaign advancement.
@@ -837,7 +873,8 @@ Best practices for the future Electron/Steamworks wrapper:
 - Line of sight has a basic runtime check, but cover rules are still not a full
   tactical targeting system yet.
 - Some ability effect tokens are design placeholders.
-- Enemy AI is not a full tactical opponent yet.
+- Enemy AI is deterministic and tactical enough for pitch encounters, but it is
+  not a full behavior-tree or pathfinding system yet.
 - Campaign flow is currently linear.
 - The editor is browser-local and does not yet manage a production asset library
   on disk.

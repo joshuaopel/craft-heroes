@@ -13,6 +13,7 @@ import type {
   PropDefinition,
   TerrainType,
   TileData,
+  AIBehavior,
   UnitData,
   UnitFaceLayout,
   UnitTemplate
@@ -470,7 +471,7 @@ export function makeTiles(width: number, depth: number, terrain: TerrainType = "
   );
 }
 
-function unit(id: string, team: "player" | "enemy", templateId: string, x: number, z: number): UnitData {
+function unit(id: string, team: "player" | "enemy", templateId: string, x: number, z: number, aiBehavior: AIBehavior = "straight-offense"): UnitData {
   const template = unitTemplates.find((candidate) => candidate.id === templateId) ?? unitTemplates[0];
   return {
     id,
@@ -480,6 +481,7 @@ function unit(id: string, team: "player" | "enemy", templateId: string, x: numbe
     x,
     z,
     hp: template.hp,
+    aiBehavior: team === "enemy" ? aiBehavior : undefined,
     rotations: { head: 0, body: team === "enemy" ? 2 : 0, legs: 0 },
     faces: structuredClone(template.faces)
   };
@@ -507,6 +509,7 @@ export const forestPass: LevelData = {
     unit("player-1", "player", "starter-cube", 1, 6),
     unit("enemy-1", "enemy", "guard-cube", 8, 1)
   ],
+  initiativeOrder: ["player-1", "enemy-1"],
   objectives: [{ type: "defeatTeam", team: "enemy" }],
   links: [{ id: "ridge-link", label: "Continue to Ridge Ambush", to: "ridge-ambush-02" }],
   story: [
@@ -570,9 +573,10 @@ export const ridgeAmbush: LevelData = {
   ],
   units: [
     unit("player-1", "player", "starter-cube", 1, 6),
-    unit("enemy-1", "enemy", "skirmisher-cube", 7, 1),
-    unit("enemy-2", "enemy", "guard-cube", 8, 4)
+    unit("enemy-1", "enemy", "skirmisher-cube", 7, 1, "avoidance-cycle"),
+    unit("enemy-2", "enemy", "guard-cube", 8, 4, "cautionary-cycle")
   ],
+  initiativeOrder: ["player-1", "enemy-1", "enemy-2"],
   objectives: [{ type: "surviveRounds", rounds: 5 }],
   links: [],
   story: [

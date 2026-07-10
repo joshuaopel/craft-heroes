@@ -9,6 +9,7 @@ import {
 } from "../game/content";
 import type {
   AbilityDefinition,
+  AIBehavior,
   CampaignData,
   ClassDefinition,
   ClassSectionStats,
@@ -31,6 +32,17 @@ const sectionNames: SectionName[] = ["head", "body", "legs"];
 const directionLabels = ["S", "E", "N", "W"] as const;
 const maxTwistsPerTurn = 2;
 type ClientCommand = "select" | "move" | "attack" | "support" | "inspect";
+type AIActionStep = "attack" | "defend" | "avoid";
+const aiBehaviorLabels: Record<AIBehavior, string> = {
+  "straight-offense": "Straight Offense",
+  "cautionary-cycle": "Cautionary Cycle",
+  "avoidance-cycle": "Avoidance Cycle"
+};
+const aiBehaviorSequences: Record<AIBehavior, AIActionStep[]> = {
+  "straight-offense": ["attack"],
+  "cautionary-cycle": ["attack", "defend", "attack"],
+  "avoidance-cycle": ["avoid", "attack", "defend", "avoid"]
+};
 
 function titleScreenSettings(campaign: CampaignData): TitleScreenSettings {
   const fallback = defaultCampaign.titleScreen;
@@ -51,6 +63,16 @@ function titleScreenSettings(campaign: CampaignData): TitleScreenSettings {
 function numberOrFallback(value: unknown, fallback: number): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function normalizeAIBehavior(value: unknown): AIBehavior {
+  return value === "cautionary-cycle" || value === "avoidance-cycle" ? value : "straight-offense";
+}
+
+function normalizeInitiativeOrder(units: UnitData[], order: unknown): string[] {
+  const unitIds = units.map((unit) => unit.id);
+  const existing = Array.isArray(order) ? order.map(String).filter((unitId) => unitIds.includes(unitId)) : [];
+  return [...existing, ...unitIds.filter((unitId) => !existing.includes(unitId))];
 }
 
 function gameplayRules(campaign: CampaignData): GameplayRules {
@@ -98,7 +120,7 @@ export interface ClientBundle {
 }
 
 export interface ClientSaveData {
-  version: 1 | 2 | 3;
+  version: 1 | 2 | 3 | 4;
   campaignId: string;
   currentLevelId: string;
   shownStory: string[];
@@ -107,6 +129,8 @@ export interface ClientSaveData {
   levels?: LevelData[];
   selectedUnitId?: string;
   turnStates?: ClientTurnState[];
+  activeInitiativeIndex?: number;
+  aiStepStates?: AIStepState[];
 }
 
 interface ClientTurnState {
@@ -114,6 +138,11 @@ interface ClientTurnState {
   moved: boolean;
   acted: boolean;
   twists: number;
+}
+
+interface AIStepState {
+  unitId: string;
+  stepIndex: number;
 }
 
 export interface ClientPresence {
@@ -154,6 +183,22 @@ function escapeHtml(value: string): string {
 function normalizeLevel(level: LevelData): LevelData {
   const width = Math.max(1, numberOrFallback(level.width, 1));
   const depth = Math.max(1, numberOrFallback(level.depth, 1));
+  const units = Array.isArray(level.units)
+    ? level.units.map((unit) => ({
+        ...unit,
+        aiBehavior: unit.team === "enemy" ? normalizeAIBehavior(unit.aiBehavior) : undefined,
+        conditions: Array.isArray(unit.conditions)
+          ? unit.conditions
+              .map((condition) => ({
+                id: String(condition.id ?? ""),
+                turns: Math.max(0, numberOrFallback(condition.turns, 0)),
+                stacks: Math.max(1, numberOrFallback(condition.stacks, 1)),
+                source: condition.source
+              }))
+              .filter((condition) => condition.id)
+          : []
+      }))
+    : [];
   return {
     ...level,
     environment: {
@@ -171,21 +216,8 @@ function normalizeLevel(level: LevelData): LevelData {
         }))
       : [],
     surroundings: Array.isArray(level.surroundings) ? level.surroundings : [],
-    units: Array.isArray(level.units)
-      ? level.units.map((unit) => ({
-          ...unit,
-          conditions: Array.isArray(unit.conditions)
-            ? unit.conditions
-                .map((condition) => ({
-                  id: String(condition.id ?? ""),
-                  turns: Math.max(0, numberOrFallback(condition.turns, 0)),
-                  stacks: Math.max(1, numberOrFallback(condition.stacks, 1)),
-                  source: condition.source
-                }))
-                .filter((condition) => condition.id)
-            : []
-        }))
-      : [],
+    units,
+    initiativeOrder: normalizeInitiativeOrder(units, level.initiativeOrder),
     objectives: Array.isArray(level.objectives) ? level.objectives : [],
     links: Array.isArray(level.links) ? level.links : [],
     story: Array.isArray(level.story)
@@ -248,10 +280,12 @@ function contentStampFor(campaign: CampaignData, levels: LevelData[]): string {
       depth: level.depth,
       objectives: level.objectives,
       links: level.links,
+      initiativeOrder: normalizeInitiativeOrder(level.units, level.initiativeOrder),
       units: level.units.map((unit) => ({
         id: unit.id,
         team: unit.team,
         templateId: unit.templateId,
+        aiBehavior: unit.aiBehavior,
         x: unit.x,
         z: unit.z,
         hp: unit.hp,
@@ -318,6 +352,9 @@ export class ClientApp {
   private inspectedCoord?: TileCoord;
   private command: ClientCommand = "select";
   private turnStates = new Map<string, ClientTurnState>();
+  private aiStepStates = new Map<string, AIStepState>();
+  private activeInitiativeIndex = 0;
+  private resolvingEnemyTurn = false;
   private round = 1;
 
   constructor(
@@ -500,6 +537,9 @@ export class ClientApp {
       this.storyQueue = [];
       this.shownStory.clear();
       this.turnStates.clear();
+      this.aiStepStates.clear();
+      this.activeInitiativeIndex = 0;
+      this.resolvingEnemyTurn = false;
       this.round = 1;
       this.inspectedCoord = undefined;
       this.started = true;
@@ -515,7 +555,7 @@ export class ClientApp {
 
   exportSave(): ClientSaveData {
     return {
-      version: 3,
+      version: 4,
       campaignId: this.campaign.id,
       currentLevelId: this.currentLevelId,
       shownStory: [...this.shownStory],
@@ -523,7 +563,9 @@ export class ClientApp {
       round: this.round,
       levels: this.levels.map((level) => structuredClone(level)),
       selectedUnitId: this.selectedUnitId,
-      turnStates: [...this.turnStates.values()].map((state) => ({ ...state }))
+      turnStates: [...this.turnStates.values()].map((state) => ({ ...state })),
+      activeInitiativeIndex: this.activeInitiativeIndex,
+      aiStepStates: [...this.aiStepStates.values()].map((state) => ({ ...state }))
     };
   }
 
@@ -544,29 +586,37 @@ export class ClientApp {
     }
     this.storyQueue = [];
     this.shownStory = new Set(save.shownStory);
+    this.resolvingEnemyTurn = false;
     this.started = true;
     this.writeLocalSave(save);
     this.closeTitleScreen();
     if (save.levels?.every(isLevel)) {
       this.levels = save.levels.map((level) => normalizeLevel(structuredClone(level)));
     }
-    this.loadLevel(save.currentLevelId, { showStory: false });
+    this.loadLevel(save.currentLevelId, { showStory: false, resolveEnemy: false });
     this.round = Math.max(1, Math.round(numberOrFallback(save.round, 1)));
+    this.aiStepStates = new Map((save.aiStepStates ?? []).map((state) => [
+      state.unitId,
+      {
+        unitId: state.unitId,
+        stepIndex: Math.max(0, Math.round(numberOrFallback(state.stepIndex, 0)))
+      }
+    ]));
     const level = this.currentLevel();
     if (level) {
       this.hydrateTurnStates(level, save.turnStates);
-      if (save.selectedUnitId && level.units.some((unit) => unit.id === save.selectedUnitId)) {
-        this.selectedUnitId = save.selectedUnitId;
-      }
+      this.activeInitiativeIndex = this.clampInitiativeIndex(level, save.activeInitiativeIndex ?? 0);
+      this.selectedUnitId = this.activeInitiativeUnit(level)?.id ?? save.selectedUnitId ?? this.firstPlayerUnit(level)?.id;
       const unit = this.selectedUnit(level);
       this.scene.setSelected(unit ? { x: unit.x, z: unit.z } : undefined);
       this.updateHud(level);
+      this.resolveEnemyTurnsIfNeeded();
     }
     return true;
   }
 
   private isCompatibleSave(save: ClientSaveData): boolean {
-    const isKnownVersion = save.version === 1 || save.version === 2 || save.version === 3;
+    const isKnownVersion = save.version === 1 || save.version === 2 || save.version === 3 || save.version === 4;
     const savedLevelsContainCurrent = save.levels?.some((level) => isLevel(level) && level.id === save.currentLevelId) ?? false;
     return (
       isKnownVersion &&
@@ -615,6 +665,9 @@ export class ClientApp {
     this.advancingAfterStory = false;
     this.round = 1;
     this.turnStates.clear();
+    this.aiStepStates.clear();
+    this.activeInitiativeIndex = 0;
+    this.resolvingEnemyTurn = false;
     this.inspectedCoord = undefined;
     this.clearLocalSave();
     this.closeTitleScreen();
@@ -777,7 +830,7 @@ export class ClientApp {
     return this.levels.find((level) => level.id === this.currentLevelId);
   }
 
-  private loadLevel(levelId: string, options: { showStory?: boolean } = {}): void {
+  private loadLevel(levelId: string, options: { showStory?: boolean; resolveEnemy?: boolean } = {}): void {
     const level = this.levels.find((candidate) => candidate.id === levelId) ?? this.levels[0];
     if (!level) {
       this.showError("No playable levels were found in those files.");
@@ -786,12 +839,14 @@ export class ClientApp {
     this.currentLevelId = level.id;
     this.advancingAfterStory = false;
     this.round = 1;
+    this.activeInitiativeIndex = 0;
+    this.aiStepStates.clear();
     this.scene.setTitleOrbit(false);
     this.stopTitleDemoLoop();
     this.titlePreviewLevel = undefined;
     this.command = "select";
     this.inspectedCoord = undefined;
-    this.selectedUnitId = this.firstPlayerUnit(level)?.id ?? level.units[0]?.id;
+    this.selectedUnitId = this.activeInitiativeUnit(level)?.id ?? this.firstPlayerUnit(level)?.id ?? level.units[0]?.id;
     this.resetTurnStates(level);
     this.scene.setRangeOverlay();
     this.scene.setLevel(level, { frame: true });
@@ -802,6 +857,9 @@ export class ClientApp {
     } else {
       this.storyLayer.className = "story-layer";
       this.storyLayer.innerHTML = "";
+    }
+    if (options.resolveEnemy ?? true) {
+      this.resolveEnemyTurnsIfNeeded();
     }
     this.invokeHost("presence", () =>
       this.options.onPresence?.({
@@ -815,9 +873,10 @@ export class ClientApp {
 
   private updateHud(level: LevelData): void {
     const campaignIndex = Math.max(0, this.campaign.levels.findIndex((entry) => entry.id === level.id));
-    const leader = this.initiativeOrder(level)[0];
-    const leaderLabel = leader ? ` / NEXT ${leader.name} ${this.initiativeScore(level, leader)}` : "";
-    this.progress.textContent = `MISSION ${campaignIndex + 1} / ${Math.max(1, this.campaign.levels.length)} / ROUND ${this.round}${leaderLabel}`;
+    const active = this.activeInitiativeUnit(level);
+    const activeIndex = this.clampInitiativeIndex(level, this.activeInitiativeIndex);
+    const activeLabel = active ? ` / TURN ${activeIndex + 1}: ${active.name}` : "";
+    this.progress.textContent = `MISSION ${campaignIndex + 1} / ${Math.max(1, this.campaign.levels.length)} / ROUND ${this.round}${activeLabel}`;
     this.levelName.textContent = level.name;
     this.objective.textContent = objectiveLabel(level);
     this.renderAbilityStrip(level);
@@ -829,11 +888,41 @@ export class ClientApp {
     return level.units.find((unit) => unit.team === "player") ?? level.units[0];
   }
 
+  private initiativeOrder(level: LevelData): UnitData[] {
+    const order = normalizeInitiativeOrder(level.units, level.initiativeOrder);
+    return order
+      .map((unitId) => level.units.find((unit) => unit.id === unitId))
+      .filter((unit): unit is UnitData => Boolean(unit));
+  }
+
+  private clampInitiativeIndex(level: LevelData, index: number): number {
+    const count = Math.max(1, this.initiativeOrder(level).length);
+    return Math.max(0, Math.min(count - 1, Math.round(numberOrFallback(index, 0))));
+  }
+
+  private activeInitiativeUnit(level = this.currentLevel()): UnitData | undefined {
+    if (!level) {
+      return undefined;
+    }
+    const order = this.initiativeOrder(level);
+    if (order.length === 0) {
+      return undefined;
+    }
+    this.activeInitiativeIndex = this.clampInitiativeIndex(level, this.activeInitiativeIndex);
+    return order[this.activeInitiativeIndex];
+  }
+
+  private isActivePlayerUnit(level: LevelData, unit: UnitData | undefined): boolean {
+    const active = this.activeInitiativeUnit(level);
+    return Boolean(unit && active && unit.team === "player" && unit.id === active.id);
+  }
+
   private selectedUnit(level = this.currentLevel()): UnitData | undefined {
     if (!level) {
       return undefined;
     }
-    return level.units.find((unit) => unit.id === this.selectedUnitId) ?? this.firstPlayerUnit(level);
+    const active = this.activeInitiativeUnit(level);
+    return level.units.find((unit) => unit.id === this.selectedUnitId) ?? active ?? this.firstPlayerUnit(level);
   }
 
   private turnStateFor(unit: UnitData): ClientTurnState {
@@ -871,6 +960,93 @@ export class ClientApp {
         ];
       })
     );
+  }
+
+  private repairRuntimeInitiative(level: LevelData): void {
+    level.initiativeOrder = normalizeInitiativeOrder(level.units, level.initiativeOrder);
+    this.activeInitiativeIndex = this.clampInitiativeIndex(level, this.activeInitiativeIndex);
+    const validUnitIds = new Set(level.units.map((unit) => unit.id));
+    for (const unitId of [...this.aiStepStates.keys()]) {
+      if (!validUnitIds.has(unitId)) {
+        this.aiStepStates.delete(unitId);
+      }
+    }
+    for (const unitId of [...this.turnStates.keys()]) {
+      if (!validUnitIds.has(unitId)) {
+        this.turnStates.delete(unitId);
+      }
+    }
+  }
+
+  private advanceInitiative(message = ""): void {
+    const level = this.currentLevel();
+    if (!level) {
+      return;
+    }
+    this.repairRuntimeInitiative(level);
+    const order = this.initiativeOrder(level);
+    if (order.length === 0) {
+      this.updateHud(level);
+      return;
+    }
+    const active = this.activeInitiativeUnit(level);
+    const currentIndex = active ? order.findIndex((unit) => unit.id === active.id) : this.activeInitiativeIndex;
+    const messages = message ? [message] : [];
+    let nextIndex = currentIndex + 1;
+    if (nextIndex >= order.length) {
+      messages.push(...this.resolveRoundEffects(level));
+      this.round += 1;
+      this.resetTurnStates(level);
+      this.repairRuntimeInitiative(level);
+      nextIndex = 0;
+    }
+    this.activeInitiativeIndex = this.clampInitiativeIndex(level, nextIndex);
+    const nextUnit = this.activeInitiativeUnit(level);
+    this.selectedUnitId = nextUnit?.id;
+    this.command = "select";
+    this.inspectedCoord = undefined;
+    this.scene.setRangeOverlay();
+    this.scene.setLevel(level);
+    this.scene.setSelected(nextUnit ? { x: nextUnit.x, z: nextUnit.z } : undefined);
+    this.updateHud(level);
+    if (messages.length > 0) {
+      this.footerLabel.textContent = messages.slice(0, 2).join(" ");
+    }
+    this.notifyProgress();
+    if (this.isObjectiveComplete(level)) {
+      this.completeLevel();
+      return;
+    }
+    this.resolveEnemyTurnsIfNeeded();
+  }
+
+  private resolveEnemyTurnsIfNeeded(): void {
+    const level = this.currentLevel();
+    if (!level || this.titleOpen || this.storyQueue.length > 0 || this.resolvingEnemyTurn) {
+      return;
+    }
+    const active = this.activeInitiativeUnit(level);
+    if (!active || active.team !== "enemy") {
+      this.scene.setInteractionEnabled(true);
+      return;
+    }
+    this.resolvingEnemyTurn = true;
+    this.scene.setInteractionEnabled(false);
+    this.selectedUnitId = active.id;
+    this.scene.setSelected({ x: active.x, z: active.z });
+    this.updateHud(level);
+    this.footerLabel.textContent = `${active.name} considers ${aiBehaviorLabels[normalizeAIBehavior(active.aiBehavior)]}.`;
+    window.setTimeout(() => {
+      const current = this.currentLevel();
+      if (!current || this.titleOpen || this.storyQueue.length > 0) {
+        this.resolvingEnemyTurn = false;
+        return;
+      }
+      const unit = current?.units.find((candidate) => candidate.id === active.id);
+      const message = current && unit ? this.resolveEnemyTurn(current, unit) : "";
+      this.resolvingEnemyTurn = false;
+      this.advanceInitiative(message);
+    }, 450);
   }
 
   private activeConditionLabel(unit: UnitData, conditionId: string, fallback: string): string {
@@ -1030,6 +1206,19 @@ export class ClientApp {
     };
   }
 
+  private sectionStatsForRotation(section: SectionName, unit: UnitData, rotation: number): ClassSectionStats {
+    const classId = unit.faces[section][((rotation % 4) + 4) % 4] ?? this.classDefinitions[0].id;
+    const base = this.classForId(classId).sections[section].stats;
+    const modifiers: ConditionDefinition["modifiers"] = this.conditionModifierTotal(unit);
+    return {
+      attack: Math.max(0, base.attack + numberOrFallback(modifiers.attack, 0)),
+      defense: Math.max(0, base.defense + numberOrFallback(modifiers.defense, 0)),
+      move: Math.max(0, base.move + numberOrFallback(modifiers.move, 0)),
+      range: Math.max(0, base.range + numberOrFallback(modifiers.range, 0)),
+      support: Math.max(0, base.support + numberOrFallback(modifiers.support, 0))
+    };
+  }
+
   private classForId(classId: string): ClassDefinition {
     return this.classDefinitions.find((classDefinition) => classDefinition.id === classId) ?? this.classDefinitions[0];
   }
@@ -1066,23 +1255,6 @@ export class ClientApp {
   private stableInitiativeRoll(unit: UnitData, max: number): number {
     const hash = [...unit.id].reduce((total, character) => total + character.charCodeAt(0), 0);
     return (hash + this.round * 7) % (max + 1);
-  }
-
-  private initiativeOrder(level: LevelData): UnitData[] {
-    const settings = this.rules().initiative;
-    return [...level.units].sort((a, b) => {
-      const scoreDelta = this.initiativeScore(level, b) - this.initiativeScore(level, a);
-      if (scoreDelta !== 0) {
-        return scoreDelta;
-      }
-      if (settings.tieBreaker === "higherHp") {
-        return b.hp - a.hp;
-      }
-      if (settings.tieBreaker === "enemy") {
-        return a.team === b.team ? 0 : a.team === "enemy" ? -1 : 1;
-      }
-      return a.team === b.team ? 0 : a.team === "player" ? -1 : 1;
-    });
   }
 
   private effectValues(effect: string | undefined, key: string): string[] {
@@ -1359,12 +1531,35 @@ export class ClientApp {
   }
 
   private renderAbilityStrip(level: LevelData): void {
+    const active = this.activeInitiativeUnit(level);
     const unit = this.selectedUnit(level);
     if (!unit) {
       this.abilityStrip.innerHTML = `
         <div class="combat-empty">
           <strong>No Unit Selected</strong>
           <span>Select a player cube to view turn controls.</span>
+        </div>
+      `;
+      return;
+    }
+    if (!this.isActivePlayerUnit(level, unit)) {
+      const behavior = unit.team === "enemy" ? normalizeAIBehavior(unit.aiBehavior) : "straight-offense";
+      this.abilityStrip.innerHTML = `
+        <div class="combat-panel-head">
+          <div>
+            <strong>${escapeHtml(unit.name)}</strong>
+            <span>${escapeHtml(`${unit.team} cube at ${unit.x}, ${unit.z}`)}</span>
+          </div>
+          <span class="turn-badge">${unit.team === "enemy" ? "Enemy AI" : "Waiting"}</span>
+        </div>
+        <div class="combat-stat-grid">
+          <div><span>HP</span><strong>${unit.hp}</strong></div>
+          <div><span>Height</span><strong>${this.tileHeight(level, unit)}</strong></div>
+          <div><span>Turn</span><strong>${this.clampInitiativeIndex(level, this.activeInitiativeIndex) + 1}</strong></div>
+        </div>
+        <div class="combat-empty">
+          <strong>${unit.team === "enemy" ? escapeHtml(aiBehaviorLabels[behavior]) : "Not Active"}</strong>
+          <span>${unit.team === "enemy" ? "The enemy will resolve automatically." : `${escapeHtml(active?.name ?? "Another unit")} is active now.`}</span>
         </div>
       `;
       return;
@@ -1422,13 +1617,14 @@ export class ClientApp {
     const level = this.currentLevel();
     const unit = this.selectedUnit(level);
     const turn = unit ? this.turnStateFor(unit) : undefined;
+    const canAct = Boolean(level && unit && this.isActivePlayerUnit(level, unit));
     this.root.querySelectorAll<HTMLButtonElement>("[data-client-action]").forEach((button) => {
       const action = button.dataset.clientAction;
       button.classList.toggle("active", action === this.command);
       if (!action || action === "load" || action === "editor" || action === "menu") {
         return;
       }
-      if (!level || !unit || !turn) {
+      if (!level || !unit || !turn || !canAct) {
         button.disabled = true;
         return;
       }
@@ -1457,6 +1653,13 @@ export class ClientApp {
     const unit = this.selectedUnit(level);
     if (!unit) {
       this.footerLabel.textContent = "No player unit";
+      return;
+    }
+    if (!this.isActivePlayerUnit(level, unit)) {
+      this.footerLabel.textContent =
+        unit.team === "enemy"
+          ? `${unit.name} / ${aiBehaviorLabels[normalizeAIBehavior(unit.aiBehavior)]} / resolving`
+          : `${unit.name} is waiting for initiative.`;
       return;
     }
     const move = this.sectionStats(level, "legs", unit).move;
@@ -1505,6 +1708,10 @@ export class ClientApp {
       this.scene.setRangeOverlay();
       return;
     }
+    if (!this.isActivePlayerUnit(level, unit)) {
+      this.scene.setRangeOverlay();
+      return;
+    }
     const range = this.rangeForCommand(level, unit);
     if (this.command === "move") {
       this.scene.setRangeOverlay(unit, range, "move");
@@ -1526,6 +1733,10 @@ export class ClientApp {
     const level = this.currentLevel();
     const unit = this.selectedUnit(level);
     if (level && unit) {
+      if (!this.isActivePlayerUnit(level, unit)) {
+        this.footerLabel.textContent = `${unit.name} is not ready for player orders.`;
+        return;
+      }
       const turn = this.turnStateFor(unit);
       if (command === "move" && turn.moved) {
         this.footerLabel.textContent = "Move already spent this turn.";
@@ -1615,6 +1826,10 @@ export class ClientApp {
     if (!level || !unit || this.titleOpen || this.storyQueue.length > 0) {
       return;
     }
+    if (!this.isActivePlayerUnit(level, unit)) {
+      this.footerLabel.textContent = `${unit.name} is not the active player unit.`;
+      return;
+    }
     const turn = this.turnStateFor(unit);
     if (turn.acted) {
       this.footerLabel.textContent = "Rotations are locked after spending the action.";
@@ -1640,6 +1855,10 @@ export class ClientApp {
     if (!level || !unit || this.titleOpen || this.storyQueue.length > 0) {
       return;
     }
+    if (!this.isActivePlayerUnit(level, unit)) {
+      this.footerLabel.textContent = `${unit.name} is not the active player unit.`;
+      return;
+    }
     const turn = this.turnStateFor(unit);
     if (turn.acted) {
       this.footerLabel.textContent = "Action already spent this turn.";
@@ -1661,6 +1880,10 @@ export class ClientApp {
     const level = this.currentLevel();
     const unit = this.selectedUnit(level);
     if (!level || !unit) {
+      return;
+    }
+    if (!this.isActivePlayerUnit(level, unit)) {
+      this.footerLabel.textContent = `${unit.name} is not the active player unit.`;
       return;
     }
     const turn = this.turnStateFor(unit);
@@ -1713,6 +1936,10 @@ export class ClientApp {
     if (!level || !unit) {
       return;
     }
+    if (!this.isActivePlayerUnit(level, unit)) {
+      this.footerLabel.textContent = `${unit.name} is not the active player unit.`;
+      return;
+    }
     const target = this.unitAt(level, coord);
     if (!target || target.team === unit.team) {
       this.footerLabel.textContent = "No enemy target.";
@@ -1753,6 +1980,7 @@ export class ClientApp {
       : `${target.name} takes ${damage}; HP ${target.hp}${applied.length ? ` / ${applied.join(", ")}` : ""}.`;
     if (target.hp <= 0) {
       level.units = level.units.filter((candidate) => candidate.id !== target.id);
+      this.repairRuntimeInitiative(level);
     }
     this.command = "select";
     this.scene.setRangeOverlay();
@@ -1771,6 +1999,10 @@ export class ClientApp {
     const level = this.currentLevel();
     const unit = this.selectedUnit(level);
     if (!level || !unit) {
+      return;
+    }
+    if (!this.isActivePlayerUnit(level, unit)) {
+      this.footerLabel.textContent = `${unit.name} is not the active player unit.`;
       return;
     }
     const target = this.unitAt(level, coord);
@@ -1833,26 +2065,237 @@ export class ClientApp {
     this.notifyProgress();
   }
 
+  private aiStepStateFor(unit: UnitData): AIStepState {
+    const existing = this.aiStepStates.get(unit.id);
+    if (existing) {
+      return existing;
+    }
+    const state: AIStepState = {
+      unitId: unit.id,
+      stepIndex: 0
+    };
+    this.aiStepStates.set(unit.id, state);
+    return state;
+  }
+
+  private consumeAIActionStep(unit: UnitData): AIActionStep {
+    const behavior = normalizeAIBehavior(unit.aiBehavior);
+    const sequence = aiBehaviorSequences[behavior];
+    const state = this.aiStepStateFor(unit);
+    const step = sequence[state.stepIndex % sequence.length] ?? "attack";
+    state.stepIndex = (state.stepIndex + 1) % sequence.length;
+    return step;
+  }
+
+  private rotateAISectionForBestStats(unit: UnitData, section: SectionName, score: (stats: ClassSectionStats) => number): boolean {
+    const turn = this.turnStateFor(unit);
+    const current = ((unit.rotations[section] % 4) + 4) % 4;
+    let bestIndex = current;
+    let bestScore = score(this.sectionStatsForRotation(section, unit, current));
+    for (let index = 0; index < 4; index += 1) {
+      const candidateScore = score(this.sectionStatsForRotation(section, unit, index));
+      if (candidateScore > bestScore) {
+        bestScore = candidateScore;
+        bestIndex = index;
+      }
+    }
+    const distance = Math.abs(bestIndex - current);
+    const twistCost = Math.min(distance, 4 - distance);
+    if (bestIndex === current || twistCost <= 0 || turn.twists + twistCost > maxTwistsPerTurn) {
+      return false;
+    }
+    unit.rotations[section] = bestIndex;
+    turn.twists += twistCost;
+    return true;
+  }
+
+  private livingPlayers(level: LevelData): UnitData[] {
+    return level.units.filter((unit) => unit.team === "player" && unit.hp > 0);
+  }
+
+  private nearestPlayer(level: LevelData, unit: UnitData): UnitData | undefined {
+    return this.livingPlayers(level).sort((a, b) => this.distance(unit, a) - this.distance(unit, b) || a.hp - b.hp)[0];
+  }
+
+  private validMoveTiles(level: LevelData, unit: UnitData, range: number, includeCurrent = false): TileCoord[] {
+    const tiles: TileCoord[] = [];
+    for (let z = 0; z < level.depth; z += 1) {
+      for (let x = 0; x < level.width; x += 1) {
+        const coord = { x, z };
+        const isCurrent = coord.x === unit.x && coord.z === unit.z;
+        if (!includeCurrent && isCurrent) {
+          continue;
+        }
+        if (this.distance(unit, coord) > range) {
+          continue;
+        }
+        const occupant = this.unitAt(level, coord);
+        if (occupant && occupant.id !== unit.id) {
+          continue;
+        }
+        if (this.isBlocked(level, coord)) {
+          continue;
+        }
+        tiles.push(coord);
+      }
+    }
+    return tiles;
+  }
+
+  private moveUnitForAI(level: LevelData, unit: UnitData, coord: TileCoord): string[] {
+    if (coord.x === unit.x && coord.z === unit.z) {
+      return [];
+    }
+    const turn = this.turnStateFor(unit);
+    unit.x = coord.x;
+    unit.z = coord.z;
+    turn.moved = true;
+    const legAbility = this.primaryAbilityForSection(level, "legs", unit);
+    return this.applyConditionsFromEffect(unit, unit, legAbility?.effect);
+  }
+
+  private findVisibleAttackTarget(level: LevelData, unit: UnitData): UnitData | undefined {
+    const body = this.sectionStats(level, "body", unit);
+    const range = Math.max(1, body.range);
+    return this.livingPlayers(level)
+      .filter((target) => this.distance(unit, target) <= range && this.hasLineOfSight(level, unit, target))
+      .sort((a, b) => a.hp - b.hp || this.distance(unit, a) - this.distance(unit, b))[0];
+  }
+
+  private attackUnitForAI(level: LevelData, attacker: UnitData, target: UnitData): string {
+    const turn = this.turnStateFor(attacker);
+    const attackerBody = this.sectionStats(level, "body", attacker);
+    const defenderBody = this.sectionStats(level, "body", target);
+    const attack = Math.max(1, attackerBody.attack);
+    const defense = Math.max(0, defenderBody.defense);
+    const heightBonus = Math.max(0, this.tileHeight(level, attacker) - this.tileHeight(level, target));
+    const damage = Math.max(1, attack + heightBonus - Math.floor(defense / 2));
+    target.hp -= damage;
+    turn.acted = true;
+    const bodyAbility = this.primaryAbilityForSection(level, "body", attacker);
+    const headAbility = this.primaryAbilityForSection(level, "head", attacker);
+    const applied = target.hp > 0
+      ? [
+          ...this.applyConditionsFromEffect(attacker, target, bodyAbility?.effect),
+          ...this.applyConditionsFromEffect(attacker, target, headAbility?.effect, "applyOnAttack")
+        ]
+      : [];
+    const message = target.hp <= 0
+      ? `${attacker.name} defeats ${target.name}.`
+      : `${attacker.name} hits ${target.name} for ${damage}${applied.length ? ` / ${applied.join(", ")}` : ""}.`;
+    if (target.hp <= 0) {
+      level.units = level.units.filter((candidate) => candidate.id !== target.id);
+      this.repairRuntimeInitiative(level);
+    }
+    this.scene.setLevel(level);
+    this.scene.setSelected({ x: attacker.x, z: attacker.z });
+    this.showActionFx("attack");
+    return message;
+  }
+
+  private guardUnitForAI(level: LevelData, unit: UnitData): string {
+    const turn = this.turnStateFor(unit);
+    turn.acted = true;
+    const applied = this.applyCondition(unit, "braced", unit);
+    this.scene.setLevel(level);
+    this.scene.setSelected({ x: unit.x, z: unit.z });
+    this.showActionFx("guard");
+    return `${unit.name} defends${applied ? ` and gains ${applied}` : ""}.`;
+  }
+
+  private moveTowardNearestPlayer(level: LevelData, unit: UnitData): string | undefined {
+    const target = this.nearestPlayer(level, unit);
+    if (!target) {
+      return undefined;
+    }
+    this.rotateAISectionForBestStats(unit, "legs", (stats) => stats.move);
+    const moveRange = Math.max(1, this.sectionStats(level, "legs", unit).move);
+    const destination = this.validMoveTiles(level, unit, moveRange)
+      .sort((a, b) =>
+        this.distance(a, target) - this.distance(b, target) ||
+        this.tileHeight(level, b) - this.tileHeight(level, a) ||
+        this.distance(unit, b) - this.distance(unit, a)
+      )[0];
+    if (!destination) {
+      return undefined;
+    }
+    const applied = this.moveUnitForAI(level, unit, destination);
+    this.scene.setLevel(level);
+    this.scene.setSelected({ x: unit.x, z: unit.z });
+    this.showActionFx("move");
+    return `${unit.name} advances to ${destination.x}, ${destination.z}${applied.length ? ` and gains ${applied.join(", ")}` : ""}.`;
+  }
+
+  private resolveAIAttack(level: LevelData, unit: UnitData): string {
+    this.rotateAISectionForBestStats(unit, "body", (stats) => stats.attack * 2 + stats.range);
+    let target = this.findVisibleAttackTarget(level, unit);
+    if (target) {
+      return this.attackUnitForAI(level, unit, target);
+    }
+    const moveMessage = this.moveTowardNearestPlayer(level, unit);
+    this.rotateAISectionForBestStats(unit, "body", (stats) => stats.attack * 2 + stats.range);
+    target = this.findVisibleAttackTarget(level, unit);
+    if (target) {
+      return `${moveMessage ?? `${unit.name} repositions.`} ${this.attackUnitForAI(level, unit, target)}`;
+    }
+    return moveMessage ? `${moveMessage} ${this.guardUnitForAI(level, unit)}` : this.guardUnitForAI(level, unit);
+  }
+
+  private resolveAIAvoid(level: LevelData, unit: UnitData): string {
+    const players = this.livingPlayers(level);
+    if (players.length === 0) {
+      return this.guardUnitForAI(level, unit);
+    }
+    this.rotateAISectionForBestStats(unit, "legs", (stats) => stats.move);
+    this.rotateAISectionForBestStats(unit, "body", (stats) => stats.range);
+    const moveRange = Math.max(1, this.sectionStats(level, "legs", unit).move);
+    const destination = this.validMoveTiles(level, unit, moveRange)
+      .sort((a, b) => {
+        const distanceA = Math.min(...players.map((player) => this.distance(a, player)));
+        const distanceB = Math.min(...players.map((player) => this.distance(b, player)));
+        const losA = players.some((player) => this.hasLineOfSight(level, a, player)) ? 1 : 0;
+        const losB = players.some((player) => this.hasLineOfSight(level, b, player)) ? 1 : 0;
+        return distanceB - distanceA || this.tileHeight(level, b) - this.tileHeight(level, a) || losB - losA;
+      })[0];
+    if (!destination) {
+      return this.guardUnitForAI(level, unit);
+    }
+    const applied = this.moveUnitForAI(level, unit, destination);
+    this.turnStateFor(unit).acted = true;
+    this.scene.setLevel(level);
+    this.scene.setSelected({ x: unit.x, z: unit.z });
+    this.showActionFx("move");
+    return `${unit.name} avoids to ${destination.x}, ${destination.z}${applied.length ? ` and gains ${applied.join(", ")}` : ""}.`;
+  }
+
+  private resolveEnemyTurn(level: LevelData, unit: UnitData): string {
+    if (unit.hp <= 0) {
+      return "";
+    }
+    const step = this.consumeAIActionStep(unit);
+    if (step === "defend") {
+      return this.guardUnitForAI(level, unit);
+    }
+    if (step === "avoid") {
+      return this.resolveAIAvoid(level, unit);
+    }
+    return this.resolveAIAttack(level, unit);
+  }
+
   private endPlayerTurn(): void {
     const level = this.currentLevel();
     if (!level || this.titleOpen || this.storyQueue.length > 0) {
       return;
     }
-    const roundMessages = this.resolveRoundEffects(level);
-    this.round += 1;
+    const unit = this.selectedUnit(level);
+    if (!this.isActivePlayerUnit(level, unit)) {
+      this.footerLabel.textContent = "Only the active player unit can end its turn.";
+      return;
+    }
     this.command = "select";
     this.inspectedCoord = undefined;
-    this.resetTurnStates(level);
     this.scene.setRangeOverlay();
-    this.footerLabel.textContent = roundMessages[0] ?? "Enemy turn resolved.";
-    this.updateHud(level);
-    if (roundMessages.length > 0) {
-      this.footerLabel.textContent = roundMessages.slice(0, 2).join(" ");
-    }
-    this.notifyProgress();
-    if (this.isObjectiveComplete(level)) {
-      this.completeLevel();
-    }
+    this.advanceInitiative(`${unit?.name ?? "Player"} ends turn.`);
   }
 
   private isObjectiveComplete(level: LevelData): boolean {
@@ -1884,6 +2327,14 @@ export class ClientApp {
       return;
     }
     if (unit?.team === "player") {
+      if (!this.isActivePlayerUnit(level, unit)) {
+        this.inspectedCoord = coord;
+        this.scene.setSelected(coord);
+        this.renderAbilityStrip(level);
+        this.updateCommandButtons();
+        this.footerLabel.textContent = `${unit.name} is waiting for initiative.`;
+        return;
+      }
       this.selectedUnitId = unit.id;
       this.command = "select";
       this.inspectedCoord = undefined;
@@ -1954,6 +2405,8 @@ export class ClientApp {
       this.storyLayer.className = "story-layer";
       if (this.advancingAfterStory) {
         this.advanceLevel();
+      } else {
+        this.resolveEnemyTurnsIfNeeded();
       }
       return;
     }
