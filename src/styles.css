@@ -720,9 +720,12 @@ textarea {
   position: absolute;
   right: 16px;
   bottom: 16px;
+  max-width: min(760px, calc(100vw - 32px));
   display: flex;
   gap: 10px;
   align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
   padding: 7px 7px 7px 12px;
   border: 1px solid var(--line);
   border-radius: 7px;
@@ -732,6 +735,8 @@ textarea {
 }
 
 .client-footer span {
+  min-width: 160px;
+  flex: 1 1 190px;
   color: var(--muted);
   font-size: 10px;
   text-transform: uppercase;
@@ -1059,7 +1064,7 @@ textarea {
   .ability-strip {
     left: 10px;
     right: 10px;
-    bottom: 70px;
+    bottom: 106px;
     max-width: none;
     overflow-x: auto;
   }

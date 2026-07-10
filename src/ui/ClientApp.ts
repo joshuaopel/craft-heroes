@@ -16,11 +16,13 @@ import type {
   SectionName,
   StoryBeat,
   TitleScreenSettings,
-  TileCoord
+  TileCoord,
+  UnitData
 } from "../game/schema";
 import { LevelScene } from "../render/LevelScene";
 
 const sectionNames: SectionName[] = ["head", "body", "legs"];
+type ClientCommand = "select" | "move" | "attack";
 
 function titleScreenSettings(campaign: CampaignData): TitleScreenSettings {
   const fallback = defaultCampaign.titleScreen;
@@ -161,6 +163,9 @@ export class ClientApp {
   private titleDemoTimer?: number;
   private titleDemoIndex = 0;
   private titlePreviewLevel?: LevelData;
+  private selectedUnitId?: string;
+  private command: ClientCommand = "select";
+  private round = 1;
 
   constructor(
     private readonly root: HTMLElement,
@@ -186,10 +191,14 @@ export class ClientApp {
       <div class="ability-strip" id="client-ability-strip"></div>
       <div class="client-footer">
         <span id="client-footer-label">Awaiting orders</span>
-        <button data-client-action="move">Move FX</button>
-        <button data-client-action="attack">Attack FX</button>
-        <button data-client-action="rotate">Rotate FX</button>
-        <button data-client-action="complete">Complete Mission</button>
+        <button data-client-action="select">Select</button>
+        <button data-client-action="move">Move</button>
+        <button data-client-action="attack">Attack</button>
+        <button data-client-action="rotate-head">Head</button>
+        <button data-client-action="rotate-body">Body</button>
+        <button data-client-action="rotate-legs">Legs</button>
+        <button data-client-action="wait">Wait</button>
+        <button data-client-action="complete">Resolve</button>
       </div>
       <input class="visually-hidden" data-client-files type="file" accept=".json,application/json" multiple>
       <div class="story-layer" aria-live="polite"></div>
@@ -243,8 +252,12 @@ export class ClientApp {
           this.showTitleScreen("", { useTitleBackdrop: false });
         } else if (action === "complete") {
           this.completeLevel();
-        } else if (action === "move" || action === "attack" || action === "rotate") {
-          this.showActionFx(action);
+        } else if (action === "select" || action === "move" || action === "attack") {
+          this.setCommand(action);
+        } else if (action === "rotate-head" || action === "rotate-body" || action === "rotate-legs") {
+          this.rotateSelectedSection(action.replace("rotate-", "") as SectionName);
+        } else if (action === "wait") {
+          this.endPlayerTurn();
         }
       });
     });
@@ -398,6 +411,7 @@ export class ClientApp {
     this.storyQueue = [];
     this.shownStory.clear();
     this.advancingAfterStory = false;
+    this.round = 1;
     this.clearLocalSave();
     this.closeTitleScreen();
     this.loadLevel(this.campaign.startLevel);
@@ -569,8 +583,10 @@ export class ClientApp {
     this.scene.setTitleOrbit(false);
     this.stopTitleDemoLoop();
     this.titlePreviewLevel = undefined;
+    this.command = "select";
+    this.selectedUnitId = this.firstPlayerUnit(level)?.id ?? level.units[0]?.id;
     this.scene.setLevel(level, { frame: true });
-    this.scene.setSelected(undefined);
+    this.scene.setSelected(this.selectedUnit(level) ? { x: this.selectedUnit(level)!.x, z: this.selectedUnit(level)!.z } : undefined);
     this.updateHud(level);
     if (options.showStory ?? true) {
       this.enqueueStory(level.story.filter((beat) => beat.trigger === "levelStart"));
@@ -590,14 +606,50 @@ export class ClientApp {
 
   private updateHud(level: LevelData): void {
     const campaignIndex = Math.max(0, this.campaign.levels.findIndex((entry) => entry.id === level.id));
-    this.progress.textContent = `MISSION ${campaignIndex + 1} / ${Math.max(1, this.campaign.levels.length)}`;
+    this.progress.textContent = `MISSION ${campaignIndex + 1} / ${Math.max(1, this.campaign.levels.length)} / ROUND ${this.round}`;
     this.levelName.textContent = level.name;
     this.objective.textContent = objectiveLabel(level);
     this.renderAbilityStrip(level);
+    this.updateCommandButtons();
+    this.updateFooterStatus(level);
   }
 
-  private playerUnit(level: LevelData) {
+  private firstPlayerUnit(level: LevelData): UnitData | undefined {
     return level.units.find((unit) => unit.team === "player") ?? level.units[0];
+  }
+
+  private selectedUnit(level = this.currentLevel()): UnitData | undefined {
+    if (!level) {
+      return undefined;
+    }
+    return level.units.find((unit) => unit.id === this.selectedUnitId) ?? this.firstPlayerUnit(level);
+  }
+
+  private playerUnit(level: LevelData): UnitData | undefined {
+    return this.selectedUnit(level) ?? this.firstPlayerUnit(level);
+  }
+
+  private unitAt(level: LevelData, coord: TileCoord): UnitData | undefined {
+    return level.units.find((unit) => unit.x === coord.x && unit.z === coord.z);
+  }
+
+  private isBlocked(level: LevelData, coord: TileCoord): boolean {
+    const obstacle = level.obstacles.find((item) => item.x === coord.x && item.z === coord.z);
+    const prop = obstacle ? this.propDefinitions.find((definition) => definition.id === obstacle.type) : undefined;
+    return Boolean(prop?.blocksMovement);
+  }
+
+  private isInsideLevel(level: LevelData, coord: TileCoord): boolean {
+    return coord.x >= 0 && coord.z >= 0 && coord.x < level.width && coord.z < level.depth;
+  }
+
+  private distance(a: TileCoord, b: TileCoord): number {
+    return Math.abs(a.x - b.x) + Math.abs(a.z - b.z);
+  }
+
+  private sectionStats(level: LevelData, section: SectionName) {
+    const classDefinition = this.frontClassForSection(level, section);
+    return classDefinition.sections[section].stats;
   }
 
   private classForId(classId: string): ClassDefinition {
@@ -630,6 +682,48 @@ export class ClientApp {
         `;
       })
       .join("");
+  }
+
+  private updateCommandButtons(): void {
+    this.root.querySelectorAll<HTMLButtonElement>("[data-client-action]").forEach((button) => {
+      const action = button.dataset.clientAction;
+      button.classList.toggle("active", action === this.command);
+    });
+  }
+
+  private updateFooterStatus(level = this.currentLevel()): void {
+    if (!level) {
+      this.footerLabel.textContent = "No active level";
+      return;
+    }
+    const unit = this.selectedUnit(level);
+    if (!unit) {
+      this.footerLabel.textContent = "No player unit";
+      return;
+    }
+    const move = this.sectionStats(level, "legs").move;
+    const range = Math.max(1, this.sectionStats(level, "body").range);
+    const attack = this.sectionStats(level, "body").attack;
+    if (this.command === "move") {
+      this.footerLabel.textContent = `${unit.name} / move ${move}`;
+    } else if (this.command === "attack") {
+      this.footerLabel.textContent = `${unit.name} / attack ${attack} / range ${range}`;
+    } else {
+      this.footerLabel.textContent = `${unit.name} / HP ${unit.hp}`;
+    }
+  }
+
+  private setCommand(command: ClientCommand): void {
+    if (this.titleOpen || this.storyQueue.length > 0) {
+      return;
+    }
+    this.command = command;
+    const level = this.currentLevel();
+    if (level) {
+      const unit = this.selectedUnit(level);
+      this.scene.setSelected(unit ? { x: unit.x, z: unit.z } : undefined);
+      this.updateHud(level);
+    }
   }
 
   private abilityForAction(action: "move" | "attack" | "rotate", sourceLevel = this.currentLevel()): AbilityDefinition | undefined {
@@ -672,22 +766,159 @@ export class ClientApp {
     }, 950);
   }
 
-  private handleTile(coord: TileCoord): void {
+  private rotateSelectedSection(section: SectionName): void {
     const level = this.currentLevel();
-    if (!level || this.titleOpen || this.storyQueue.length > 0) {
+    const unit = this.selectedUnit(level);
+    if (!level || !unit || this.titleOpen || this.storyQueue.length > 0) {
       return;
     }
-    this.scene.setSelected(coord);
+    unit.rotations[section] = (unit.rotations[section] + 1) % 4;
+    this.scene.setLevel(level);
+    this.scene.setSelected({ x: unit.x, z: unit.z });
+    this.renderAbilityStrip(level);
+    this.showActionFx("rotate");
+    this.updateHud(level);
+    this.notifyProgress();
+  }
+
+  private tryMoveSelected(coord: TileCoord): void {
+    const level = this.currentLevel();
+    const unit = this.selectedUnit(level);
+    if (!level || !unit) {
+      return;
+    }
+    const moveRange = Math.max(1, this.sectionStats(level, "legs").move);
+    if (!this.isInsideLevel(level, coord)) {
+      this.footerLabel.textContent = "Out of bounds.";
+      return;
+    }
+    if (this.unitAt(level, coord) && this.unitAt(level, coord)?.id !== unit.id) {
+      this.footerLabel.textContent = "Tile occupied.";
+      return;
+    }
+    if (this.isBlocked(level, coord)) {
+      this.footerLabel.textContent = "Path blocked.";
+      return;
+    }
+    if (this.distance(unit, coord) > moveRange) {
+      this.footerLabel.textContent = `Move range ${moveRange}.`;
+      return;
+    }
+    unit.x = coord.x;
+    unit.z = coord.z;
+    this.command = "select";
+    this.scene.setLevel(level);
+    this.scene.setSelected({ x: unit.x, z: unit.z });
+    this.showActionFx("move");
     this.enqueueStory(
       level.story.filter(
         (beat) => beat.trigger === "tileEnter" && beat.x === coord.x && beat.z === coord.z
       )
     );
+    this.updateHud(level);
+    this.notifyProgress();
+  }
+
+  private tryAttackTarget(coord: TileCoord): void {
+    const level = this.currentLevel();
+    const unit = this.selectedUnit(level);
+    if (!level || !unit) {
+      return;
+    }
+    const target = this.unitAt(level, coord);
+    if (!target || target.team === unit.team) {
+      this.footerLabel.textContent = "No enemy target.";
+      return;
+    }
+    const range = Math.max(1, this.sectionStats(level, "body").range);
+    if (this.distance(unit, target) > range) {
+      this.footerLabel.textContent = `Attack range ${range}.`;
+      return;
+    }
+    const attack = Math.max(1, this.sectionStats(level, "body").attack);
+    target.hp -= attack;
+    if (target.hp <= 0) {
+      level.units = level.units.filter((candidate) => candidate.id !== target.id);
+      this.footerLabel.textContent = `${target.name} defeated.`;
+    } else {
+      this.footerLabel.textContent = `${target.name} HP ${target.hp}.`;
+    }
+    this.command = "select";
+    this.scene.setLevel(level);
+    this.scene.setSelected({ x: unit.x, z: unit.z });
+    this.showActionFx("attack");
+    this.updateHud(level);
+    this.notifyProgress();
+    if (this.isObjectiveComplete(level)) {
+      window.setTimeout(() => this.completeLevel(), 550);
+    }
+  }
+
+  private endPlayerTurn(): void {
+    const level = this.currentLevel();
+    if (!level || this.titleOpen || this.storyQueue.length > 0) {
+      return;
+    }
+    this.round += 1;
+    this.command = "select";
+    this.footerLabel.textContent = "Enemy turn resolved.";
+    this.updateHud(level);
+    this.notifyProgress();
+    if (this.isObjectiveComplete(level)) {
+      this.completeLevel();
+    }
+  }
+
+  private isObjectiveComplete(level: LevelData): boolean {
+    const objective = level.objectives[0];
+    if (!objective) {
+      return false;
+    }
+    if (objective.type === "defeatTeam") {
+      const targetTeam = objective.team ?? "enemy";
+      return !level.units.some((unit) => unit.team === targetTeam);
+    }
+    if (objective.type === "reachTile") {
+      return level.units.some((unit) => unit.team === "player" && unit.x === objective.x && unit.z === objective.z);
+    }
+    if (objective.type === "surviveRounds") {
+      return this.round >= (objective.rounds ?? 1);
+    }
+    return false;
+  }
+
+  private handleTile(coord: TileCoord): void {
+    const level = this.currentLevel();
+    if (!level || this.titleOpen || this.storyQueue.length > 0) {
+      return;
+    }
+    const unit = this.unitAt(level, coord);
+    if (unit?.team === "player") {
+      this.selectedUnitId = unit.id;
+      this.command = "select";
+      this.scene.setSelected({ x: unit.x, z: unit.z });
+      this.updateHud(level);
+      return;
+    }
+    if (this.command === "move") {
+      this.tryMoveSelected(coord);
+      return;
+    }
+    if (this.command === "attack") {
+      this.tryAttackTarget(coord);
+      return;
+    }
+    this.scene.setSelected(coord);
+    this.footerLabel.textContent = unit ? `${unit.name} / HP ${unit.hp}` : `Tile ${coord.x}, ${coord.z}`;
   }
 
   private completeLevel(): void {
     const level = this.currentLevel();
     if (!level || this.titleOpen || this.storyQueue.length > 0) {
+      return;
+    }
+    if (!this.isObjectiveComplete(level)) {
+      this.footerLabel.textContent = "Objective still active.";
       return;
     }
     this.advancingAfterStory = true;
