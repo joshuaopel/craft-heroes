@@ -645,6 +645,16 @@ function textToRuleConditions(value: string, fallback: ConditionDefinition[]): C
   });
 }
 
+interface StoryDraft {
+  trigger: StoryTrigger;
+  presentation: StoryPresentation;
+  title: string;
+  speaker: string;
+  text: string;
+  x: number;
+  z: number;
+}
+
 interface EditorState {
   mode: "editor" | "play";
   tool: EditorTool;
@@ -655,6 +665,7 @@ interface EditorState {
   classId: ClassId;
   levelId: string;
   propRotationSteps: number;
+  storyDraft: StoryDraft;
   selected?: TileCoord;
 }
 
@@ -679,7 +690,16 @@ export class EditorApp {
     templateId: this.templates[1]?.id ?? this.templates[0].id,
     classId: this.classDefinitions[0].id,
     levelId: defaultCampaign.startLevel,
-    propRotationSteps: 0
+    propRotationSteps: 0,
+    storyDraft: {
+      trigger: "levelStart",
+      presentation: "dialog",
+      title: "",
+      speaker: "",
+      text: "",
+      x: 0,
+      z: 0
+    }
   };
 
   constructor(root: HTMLElement) {
@@ -1439,6 +1459,25 @@ export class EditorApp {
   }
 
   private readStoryDraft(): StoryBeat {
+    this.syncStoryDraftFromPanel();
+    const draft = this.state.storyDraft;
+    return {
+      id: `story-${Date.now()}`,
+      trigger: draft.trigger,
+      presentation: draft.presentation,
+      title: draft.title.trim(),
+      speaker: draft.speaker.trim(),
+      text: draft.text.trim() || "New story beat",
+      ...(draft.trigger === "tileEnter"
+        ? {
+            x: Math.round(numberOrFallback(draft.x, this.state.selected?.x ?? 0)),
+            z: Math.round(numberOrFallback(draft.z, this.state.selected?.z ?? 0))
+          }
+        : {})
+    };
+  }
+
+  private syncStoryDraftFromPanel(): void {
     const triggerInput = this.panel.querySelector<HTMLSelectElement>("[data-story='trigger']");
     const presentationInput = this.panel.querySelector<HTMLSelectElement>("[data-story='presentation']");
     const titleInput = this.panel.querySelector<HTMLInputElement>("[data-story='title']");
@@ -1446,21 +1485,31 @@ export class EditorApp {
     const textInput = this.panel.querySelector<HTMLTextAreaElement>("[data-story='text']");
     const xInput = this.panel.querySelector<HTMLInputElement>("[data-story='x']");
     const zInput = this.panel.querySelector<HTMLInputElement>("[data-story='z']");
-    const trigger = (triggerInput?.value as StoryTrigger | undefined) ?? "levelStart";
-    return {
-      id: `story-${Date.now()}`,
+    const trigger = triggerInput?.value === "tileEnter" || triggerInput?.value === "levelComplete" ? triggerInput.value : "levelStart";
+    const presentation = presentationInput?.value === "screen" ? "screen" : "dialog";
+    this.state.storyDraft = {
       trigger,
-      presentation: (presentationInput?.value as StoryPresentation | undefined) ?? "dialog",
-      title: titleInput?.value.trim() || "",
-      speaker: speakerInput?.value.trim() || "",
-      text: textInput?.value.trim() || "New story beat",
-      ...(trigger === "tileEnter"
-        ? {
-            x: Math.round(numberOrFallback(xInput?.value, this.state.selected?.x ?? 0)),
-            z: Math.round(numberOrFallback(zInput?.value, this.state.selected?.z ?? 0))
-          }
-        : {})
+      presentation,
+      title: titleInput?.value ?? this.state.storyDraft.title,
+      speaker: speakerInput?.value ?? this.state.storyDraft.speaker,
+      text: textInput?.value ?? this.state.storyDraft.text,
+      x: Math.max(0, Math.round(numberOrFallback(xInput?.value, this.state.storyDraft.x))),
+      z: Math.max(0, Math.round(numberOrFallback(zInput?.value, this.state.storyDraft.z)))
     };
+  }
+
+  private setStoryDraftTile(coord: TileCoord): void {
+    this.syncStoryDraftFromPanel();
+    this.state.storyDraft = {
+      ...this.state.storyDraft,
+      trigger: "tileEnter",
+      x: coord.x,
+      z: coord.z
+    };
+    this.state.selected = coord;
+    this.scene.setSelected(coord);
+    this.updatePanel();
+    this.flash(`Story tile set to ${coord.x}, ${coord.z}.`);
   }
 
   private applyLevelSize(): void {
@@ -1533,6 +1582,9 @@ export class EditorApp {
     } else if (this.state.tool === "unit") {
       const template = this.selectedTemplate();
       next = placeUnit(level, coord, this.state.team, template);
+    } else if (this.state.tool === "story") {
+      this.setStoryDraftTile(coord);
+      return;
     } else if (this.state.tool === "erase") {
       next = eraseTileOccupants(level, coord);
     }
@@ -1559,6 +1611,7 @@ export class EditorApp {
     const selectedObstacle = this.state.selected
       ? level.obstacles.find((obstacle) => obstacle.x === this.state.selected?.x && obstacle.z === this.state.selected?.z)
       : undefined;
+    const storyDraft = this.state.storyDraft;
     const json = this.editorJson();
     const libraryCards = [
       { label: "Classes", count: this.classDefinitions.length, details: this.classDefinitions.map((item) => item.name).join(", ") },
@@ -1608,7 +1661,7 @@ export class EditorApp {
       </section>
 
       <div class="tool-grid">
-        ${(["select", "raise", "lower", "paint", "obstacle", "unit", "erase"] as EditorTool[])
+        ${(["select", "raise", "lower", "paint", "obstacle", "unit", "story", "erase"] as EditorTool[])
           .map((tool) => `<button class="${this.state.tool === tool ? "active" : ""}" data-tool="${tool}">${tool}</button>`)
           .join("")}
       </div>
@@ -1759,38 +1812,46 @@ export class EditorApp {
           <label class="field">
             <span>Trigger</span>
             <select data-story="trigger">
-              <option value="levelStart">Level Start</option>
-              <option value="tileEnter">Tile Enter</option>
-              <option value="levelComplete">Level Complete</option>
+              <option value="levelStart" ${storyDraft.trigger === "levelStart" ? "selected" : ""}>Level Start</option>
+              <option value="tileEnter" ${storyDraft.trigger === "tileEnter" ? "selected" : ""}>Tile Enter</option>
+              <option value="levelComplete" ${storyDraft.trigger === "levelComplete" ? "selected" : ""}>Level Complete</option>
             </select>
           </label>
           <label class="field">
             <span>Presentation</span>
             <select data-story="presentation">
-              <option value="dialog">Dialog</option>
-              <option value="screen">Story Screen</option>
+              <option value="dialog" ${storyDraft.presentation === "dialog" ? "selected" : ""}>Dialog</option>
+              <option value="screen" ${storyDraft.presentation === "screen" ? "selected" : ""}>Story Screen</option>
             </select>
           </label>
           <label class="field">
             <span>Tile X</span>
-            <input data-story="x" type="number" min="0" max="${Math.max(0, level.width - 1)}" step="1" value="${this.state.selected?.x ?? 0}">
+            <input data-story="x" type="number" min="0" max="${Math.max(0, level.width - 1)}" step="1" value="${storyDraft.x}">
           </label>
           <label class="field">
             <span>Tile Z</span>
-            <input data-story="z" type="number" min="0" max="${Math.max(0, level.depth - 1)}" step="1" value="${this.state.selected?.z ?? 0}">
+            <input data-story="z" type="number" min="0" max="${Math.max(0, level.depth - 1)}" step="1" value="${storyDraft.z}">
           </label>
           <label class="field">
             <span>Title</span>
-            <input data-story="title" type="text" placeholder="Optional title">
+            <input data-story="title" type="text" placeholder="Optional title" value="${escapeHtml(storyDraft.title)}">
           </label>
           <label class="field">
             <span>Speaker</span>
-            <input data-story="speaker" type="text" placeholder="Optional speaker">
+            <input data-story="speaker" type="text" placeholder="Optional speaker" value="${escapeHtml(storyDraft.speaker)}">
           </label>
+        </div>
+        <div class="story-picker">
+          <strong>Tile target</strong>
+          <span>${storyDraft.trigger === "tileEnter" ? `Tile ${storyDraft.x}, ${storyDraft.z}` : "Only used when Trigger is Tile Enter."}</span>
+          <div class="button-row two">
+            <button data-action="pick-story-tile">Pick Tile</button>
+            <button data-action="use-selected-story-tile" ${this.state.selected ? "" : "disabled"}>Use Selected Tile</button>
+          </div>
         </div>
         <label class="field">
           <span>Story Text</span>
-          <textarea class="story-textarea" data-story="text" placeholder="What happens here?"></textarea>
+          <textarea class="story-textarea" data-story="text" placeholder="What happens here?">${escapeHtml(storyDraft.text)}</textarea>
         </label>
         <button data-action="add-story">Add Story Beat</button>
         <div class="story-list">
@@ -2278,6 +2339,16 @@ export class EditorApp {
       input.addEventListener("change", () => this.handleBackgroundModelUpload(input));
     });
 
+    this.panel.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>("[data-story]").forEach((input) => {
+      input.addEventListener("input", () => this.syncStoryDraftFromPanel());
+      input.addEventListener("change", () => {
+        this.syncStoryDraftFromPanel();
+        if (input instanceof HTMLSelectElement && input.dataset.story === "trigger") {
+          this.updatePanel();
+        }
+      });
+    });
+
     this.panel.querySelectorAll<HTMLButtonElement>("[data-action]").forEach((button) => {
       button.addEventListener("click", () => this.handleAction(button.dataset.action ?? "", button.dataset.storyId));
     });
@@ -2630,15 +2701,27 @@ export class EditorApp {
       this.scene.setLevel(next);
       this.updatePanel();
       this.flash("Cleared surrounding props.");
+    } else if (action === "pick-story-tile") {
+      this.syncStoryDraftFromPanel();
+      this.state.tool = "story";
+      this.updatePanel();
+      this.flash("Story tile picker active. Click the tile that should trigger this beat.");
+    } else if (action === "use-selected-story-tile") {
+      if (this.state.selected) {
+        this.setStoryDraftTile(this.state.selected);
+      } else {
+        this.flash("Select a tile first, then use it for the story beat.");
+      }
     } else if (action === "add-story") {
       const level = this.currentLevel();
+      const storyBeat = this.readStoryDraft();
       const next = {
         ...level,
-        story: [...level.story, this.readStoryDraft()]
+        story: [...level.story, storyBeat]
       };
       this.setCurrentLevel(next);
       this.updatePanel();
-      this.flash("Added story beat.");
+      this.flash(storyBeat.trigger === "tileEnter" ? `Added story beat at ${storyBeat.x}, ${storyBeat.z}.` : "Added story beat.");
     } else if (action === "remove-story" && storyId) {
       const level = this.currentLevel();
       const next = {
@@ -2681,6 +2764,15 @@ export class EditorApp {
       this.state.terrain = this.environmentMaterials[0].id;
       this.state.obstacle = this.propDefinitions[0].id;
       this.state.propRotationSteps = 0;
+      this.state.storyDraft = {
+        trigger: "levelStart",
+        presentation: "dialog",
+        title: "",
+        speaker: "",
+        text: "",
+        x: 0,
+        z: 0
+      };
       this.state.selected = undefined;
       this.scene.setClassDefinitions(this.classDefinitions);
       this.scene.setEnvironmentMaterials(this.environmentMaterials);

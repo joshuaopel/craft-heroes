@@ -103,6 +103,12 @@ type ClickHandler = (coord: TileCoord) => void;
 type SetLevelOptions = {
   frame?: boolean;
 };
+type RangeOverlayKind = "move" | "attack" | "support" | "sight";
+type RangeOverlay = {
+  origin: TileCoord;
+  range: number;
+  kind: RangeOverlayKind;
+};
 type TerrainMaterialSet = {
   top: THREE.Material;
   sideCap: THREE.MeshStandardMaterial;
@@ -133,6 +139,7 @@ export class LevelScene {
   private classDefinitions: ClassDefinition[] = [];
   private environmentMaterials: EnvironmentMaterialDefinition[] = [];
   private propDefinitions: PropDefinition[] = [];
+  private rangeOverlay?: RangeOverlay;
   private classMaterials: Record<SectionName, Record<ClassId, THREE.MeshStandardMaterial>> = {
     head: {},
     body: {},
@@ -209,6 +216,11 @@ export class LevelScene {
 
   setSelected(coord?: TileCoord): void {
     this.selected = coord;
+    this.renderLevel();
+  }
+
+  setRangeOverlay(origin?: TileCoord, range = 0, kind: RangeOverlayKind = "move"): void {
+    this.rangeOverlay = origin && range > 0 ? { origin, range, kind } : undefined;
     this.renderLevel();
   }
 
@@ -495,6 +507,9 @@ export class LevelScene {
     this.addTerrain(this.level);
     this.addWaterSeaweed(this.level);
     this.addGrassVoxels(this.level);
+    if (this.rangeOverlay) {
+      this.addRangeOverlay(this.rangeOverlay);
+    }
     for (const obstacle of this.level.obstacles) {
       this.addObstacle(this.level, obstacle);
     }
@@ -1351,6 +1366,40 @@ export class LevelScene {
     mesh.rotation.x = -Math.PI / 2;
     mesh.renderOrder = 10;
     this.root.add(mesh);
+  }
+
+  private addRangeOverlay(overlay: RangeOverlay): void {
+    if (!this.level) {
+      return;
+    }
+    const colorByKind: Record<RangeOverlayKind, string> = {
+      move: "#60d7e4",
+      attack: "#ff6d62",
+      support: "#6fcf7c",
+      sight: "#f2bd55"
+    };
+    const material = new THREE.MeshBasicMaterial({
+      color: colorByKind[overlay.kind],
+      transparent: true,
+      opacity: overlay.kind === "sight" ? 0.16 : 0.24,
+      depthWrite: false
+    });
+    const geometry = new THREE.PlaneGeometry(tileSize * 0.78, tileSize * 0.78);
+    const group = new THREE.Group();
+    for (let z = 0; z < this.level.depth; z += 1) {
+      for (let x = 0; x < this.level.width; x += 1) {
+        const distance = Math.abs(x - overlay.origin.x) + Math.abs(z - overlay.origin.z);
+        if (distance === 0 || distance > overlay.range) {
+          continue;
+        }
+        const mesh = new THREE.Mesh(geometry, material);
+        mesh.position.copy(this.worldPosition(this.level, x, z, this.tileTopY(this.level, x, z) + 0.032));
+        mesh.rotation.x = -Math.PI / 2;
+        mesh.renderOrder = 8;
+        group.add(mesh);
+      }
+    }
+    this.root.add(group);
   }
 
   private pick(event: MouseEvent): void {

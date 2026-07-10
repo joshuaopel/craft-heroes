@@ -152,12 +152,13 @@ Editing tools:
 
 | Tool | What It Does | Notes |
 | --- | --- | --- |
-| select | Selects a tile or unit. | Use before editing story tile coordinates. |
+| select | Selects a tile or unit. | Use before assigning a selected tile to a story beat. |
 | raise | Raises clicked terrain. | Height affects tactical readability and initiative scoring. |
 | lower | Lowers clicked terrain. | Use for water beds, paths, and valleys. |
 | paint | Paints the selected terrain material. | Paint after broad height shaping. |
 | obstacle | Places the selected prop/blocker. | Uses current prop rotation. |
 | unit | Places the selected unit template for the selected team. | Use player/enemy team selector first. |
+| story | Lets the next clicked tile become a tile-enter story trigger. | Usually entered by pressing **Pick Tile** in Story Beats. |
 | erase | Removes occupants from a tile. | Use for cleanup after layout changes. |
 
 Placement selectors:
@@ -503,12 +504,15 @@ Story options:
 | Tile Z | Tile coordinate for `tileEnter`. |
 | Title | Optional heading. |
 | Speaker | Optional speaker label. |
+| Pick Tile | Switches the board into story-picking mode; click the tile that should trigger the beat. |
+| Use Selected Tile | Copies the currently selected board tile into the story beat. |
 | Story Text | Body text shown to the player. |
 
 Best practices:
 
 - Use `levelStart` for mission briefing or mood.
 - Use `tileEnter` for ambushes, discoveries, tutorials, and environmental beats.
+- Prefer **Pick Tile** or **Use Selected Tile** over typing coordinates by hand.
 - Use `levelComplete` for transition text into the next mission.
 - Keep dialog short during play. Use screen presentation for chapter breaks.
 
@@ -607,14 +611,16 @@ Client buttons:
 | --- | --- |
 | Load Game | Loads one or more JSON content files. |
 | Menu | Reopens the title menu. |
-| Select | Selects a unit or tile. |
-| Move | Uses the selected unit's current legs stats. |
-| Attack | Uses the selected unit's current body/arms stats and effects. |
-| Support | Uses support and cleanse/heal effects from current head/body faces. |
-| Head | Rotates the selected unit's head section. |
-| Body | Rotates the selected unit's body/arms section. |
-| Legs | Rotates the selected unit's legs section. |
-| Wait | Advances the round and ticks condition durations/effects. |
+| Reset | Clears the active command and returns focus to the selected unit. |
+| Move | Uses the selected unit's current legs stats; one move per unit per round. |
+| Attack | Uses the selected unit's current body/arms stats and effects; one action per unit per round. |
+| Support | Uses support and cleanse/heal effects from current head/body faces; spends the action. |
+| Guard | Applies the `braced` condition and spends the action. |
+| Head < / > | Rotates the selected unit's head section. |
+| Body < / > | Rotates the selected unit's body/arms section. |
+| Legs < / > | Rotates the selected unit's legs section. |
+| Inspect | Shows sight range and line-of-sight details for clicked tiles. |
+| End Turn | Advances the round, resets move/action/twist budgets, and ticks condition durations/effects. |
 | Resolve | Completes the level if the objective is done. |
 
 HUD areas:
@@ -622,8 +628,26 @@ HUD areas:
 | Area | Meaning |
 | --- | --- |
 | Mission chip | Mission index, round, next initiative leader, level name, objective. |
-| Ability strip | Current head/body/legs class faces and active condition chips. |
-| Footer | Selected unit, HP, action range/stat preview, and recent result text. |
+| Combat panel | Selected unit HP, height, move/action/twist state, current section faces, action buttons, target line, class stats, and conditions. |
+| Range overlay | Cyan for movement, red for attack, green for support, yellow for sight/inspect. |
+| Footer | Current command, range/stat preview, and recent result text. |
+
+Current turn budget:
+
+| Budget | Limit | Reset |
+| --- | --- | --- |
+| Move | One move per unit per round. | **End Turn**. |
+| Action | One attack, support, or guard per unit per round. | **End Turn**. |
+| Twists | Two section rotations per unit per round. | **End Turn**. |
+
+Targeting notes:
+
+- Movement uses the active legs face.
+- Attacks use the active body/arms face against the defender's active body/arms defense.
+- Support uses active head/body support effects.
+- Taller attack positions add a small high-ground damage bonus.
+- Props, terrain materials, and taller intervening terrain can block line of sight.
+- Inspect mode is free and exists to preview sight, height, and line-of-sight before committing.
 
 Current objective types:
 
@@ -635,7 +659,7 @@ Current objective types:
 
 Current save behavior:
 
-- Client saves use browser local storage by campaign ID.
+- Client saves use browser local storage by campaign ID and now include current round, level state, selected unit, and spent move/action/twist budgets.
 - `New Game` clears compatible save progress.
 - `Continue` restores a compatible local save.
 - The desktop host bridge can own save files later.
@@ -645,7 +669,7 @@ Best practices:
 - Test every exported campaign through `client.html`, not only editor Play mode.
 - Make sure the first level has a player unit and a clear objective.
 - Use story beats to explain any new rule before relying on it.
-- Watch the ability strip after rotating sections; it is the fastest sanity check
+- Watch the combat panel after rotating sections; it is the fastest sanity check
   that faces and abilities are assigned correctly.
 
 ## Standalone PC Client
@@ -749,20 +773,23 @@ Best practices for the future Electron/Steamworks wrapper:
 - Prop library with box/GLB assets, blockers, cover, wind, and light settings.
 - Class editor with section images, stats, notes, and abilities.
 - Unit build editor with four faces per section.
-- Story beat creation and removal.
+- Story beat creation/removal with tile picking for `tileEnter` triggers.
 
 ### Implemented Client Features
 
 - Title screen with New Game, Continue, Options, and Load Content.
 - Optional title camera orbit and mock battle FX.
 - Mission HUD with objective and initiative leader.
-- Ability strip for current head/body/legs faces.
+- Combat panel for current head/body/legs faces, section gains, target line, and turn budgets.
 - Active condition chips.
-- Select, Move, Attack, Support, Rotate Head, Rotate Body, Rotate Legs, Wait,
+- Select, Move, Attack, Support, Guard, Rotate Head, Rotate Body, Rotate Legs, Inspect, End Turn,
   and Resolve controls.
+- One move, one action, and two twists per unit per round.
+- Range overlays for movement, attack, support, and sight/inspect previews.
 - Movement using current legs stats.
 - Attack using current body stats versus target body defense.
 - Support actions with cleanse/heal/ward effects.
+- Basic line-of-sight blocking and high-ground attack bonus.
 - Buff/debuff/trap/status condition application.
 - Round-end condition ticking.
 - Level start, tile enter, and level complete story beats.
@@ -783,8 +810,8 @@ Best practices for the future Electron/Steamworks wrapper:
 
 ### Known Prototype Limits
 
-- Line of sight and cover are partially represented by data but not fully resolved
-  as a tactical targeting system yet.
+- Line of sight has a basic runtime check, but cover rules are still not a full
+  tactical targeting system yet.
 - Some ability effect tokens are design placeholders.
 - Enemy AI is not a full tactical opponent yet.
 - Campaign flow is currently linear.
@@ -803,4 +830,3 @@ Update this guide whenever a feature changes. Use this checklist:
 - Mark whether the feature is editor-only, client-visible, or desktop-hosted.
 - Add best practices after testing the feature in at least one real level.
 - Keep Known Prototype Limits honest so pitch expectations stay aligned.
-

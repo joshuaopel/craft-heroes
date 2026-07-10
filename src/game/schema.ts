@@ -278,6 +278,7 @@ export type EditorTool =
   | "paint"
   | "obstacle"
   | "unit"
+  | "story"
   | "erase";
 
 export interface TileCoord {
