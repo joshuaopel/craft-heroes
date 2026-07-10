@@ -5,6 +5,7 @@ import {
   defaultEnvironmentSettings,
   defaultLevels,
   defaultPropDefinitions,
+  makeTiles,
   unitTemplates
 } from "../game/content";
 import {
@@ -41,6 +42,7 @@ import type {
   StoryTrigger,
   Team,
   TerrainType,
+  TitleScreenSettings,
   TileCoord,
   UnitTemplate
 } from "../game/schema";
@@ -60,6 +62,20 @@ const templatesStorageKey = "craft-heroes-unit-templates";
 const classesStorageKey = "craft-heroes-class-definitions";
 const materialsStorageKey = "craft-heroes-environment-materials";
 const propsStorageKey = "craft-heroes-prop-definitions";
+const editorProjectStorageKey = "craft-heroes-editor-project";
+
+type EditorProjectBundle = {
+  campaign?: CampaignData;
+  levels?: LevelData[];
+  level?: LevelData;
+  templates?: UnitTemplate[];
+  classes?: ClassDefinition[];
+  classDefinitions?: ClassDefinition[];
+  terrainMaterials?: EnvironmentMaterialDefinition[];
+  environmentMaterials?: EnvironmentMaterialDefinition[];
+  props?: PropDefinition[];
+  propDefinitions?: PropDefinition[];
+};
 
 function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (character) => {
@@ -112,6 +128,20 @@ function propIdFromName(name: string): string {
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
   return slug || `prop-${Date.now()}`;
+}
+
+function levelIdFromName(name: string): string {
+  const slug = name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return slug || `level-${Date.now()}`;
+}
+
+function safeFileName(name: string): string {
+  const slug = levelIdFromName(name);
+  return slug.endsWith(".json") ? slug : `${slug}.json`;
 }
 
 function readStoredJson<T>(key: string): T | undefined {
@@ -338,6 +368,55 @@ function normalizeLevelData(level: LevelData): LevelData {
   };
 }
 
+function normalizeTitleScreenSettings(settings: Partial<TitleScreenSettings> | undefined, fallbackLevelId: string): TitleScreenSettings {
+  const fallback = defaultCampaign.titleScreen;
+  return {
+    kicker: settings?.kicker || fallback?.kicker || "Voxel tactics prototype",
+    headline: settings?.headline || fallback?.headline || "Craft Heroes",
+    subhead:
+      settings?.subhead ||
+      fallback?.subhead ||
+      "Rotate class faces, chain handmade levels, and test the build language for a Steam-ready tactics pitch.",
+    backgroundLevelId: settings?.backgroundLevelId || fallback?.backgroundLevelId || fallbackLevelId,
+    cameraOrbit: settings?.cameraOrbit ?? fallback?.cameraOrbit ?? true,
+    orbitSpeed: Math.max(0.01, Math.min(0.4, numberOrFallback(settings?.orbitSpeed, fallback?.orbitSpeed ?? 0.08))),
+    mockBattle: settings?.mockBattle ?? fallback?.mockBattle ?? true
+  };
+}
+
+function normalizeCampaignData(campaign: CampaignData, levels: LevelData[]): CampaignData {
+  const levelIds = new Set(levels.map((level) => level.id));
+  const refs = Array.isArray(campaign.levels) && campaign.levels.length > 0
+    ? campaign.levels
+        .filter((entry) => typeof entry.id === "string" && entry.id)
+        .map((entry) => ({
+          id: entry.id,
+          file: entry.file || `levels/${entry.id}.json`,
+          next: Array.isArray(entry.next) ? entry.next.filter((id) => typeof id === "string" && id) : []
+        }))
+    : levels.map((level, index) => ({
+        id: level.id,
+        file: `levels/${level.id}.json`,
+        next: levels[index + 1] ? [levels[index + 1].id] : []
+      }));
+  const seen = new Set(refs.map((entry) => entry.id));
+  for (const level of levels) {
+    if (!seen.has(level.id)) {
+      refs.push({ id: level.id, file: `levels/${level.id}.json`, next: level.links[0]?.to ? [level.links[0].to] : [] });
+    }
+  }
+  const fallbackStart = levels[0]?.id ?? defaultCampaign.startLevel;
+  const startLevel = levelIds.has(campaign.startLevel) ? campaign.startLevel : refs[0]?.id ?? fallbackStart;
+  return {
+    ...campaign,
+    id: campaign.id || defaultCampaign.id,
+    title: campaign.title || defaultCampaign.title,
+    startLevel,
+    titleScreen: normalizeTitleScreenSettings(campaign.titleScreen, startLevel),
+    levels: refs
+  };
+}
+
 function initialClassDefinitions(): ClassDefinition[] {
   const stored = readStoredJson<ClassDefinition[]>(classesStorageKey);
   return Array.isArray(stored) && stored.length > 0
@@ -432,8 +511,9 @@ export class EditorApp {
   private readonly canvas: HTMLCanvasElement;
   private readonly scene: LevelScene;
   private readonly panel: HTMLElement;
+  private readonly utility: HTMLElement;
   private levels: LevelData[] = defaultLevels.map((level) => normalizeLevelData(cloneLevel(level)));
-  private campaign: CampaignData = structuredClone(defaultCampaign);
+  private campaign: CampaignData = normalizeCampaignData(structuredClone(defaultCampaign), this.levels);
   private templates: UnitTemplate[] = initialTemplates();
   private classDefinitions: ClassDefinition[] = initialClassDefinitions();
   private environmentMaterials: EnvironmentMaterialDefinition[] = initialEnvironmentMaterials();
@@ -456,10 +536,13 @@ export class EditorApp {
     this.root.innerHTML = `
       <canvas class="world-canvas" aria-label="Craft Heroes level editor viewport"></canvas>
       <aside class="editor-panel"></aside>
+      <div class="utility-layer"></div>
       <div class="status-chip" id="status-chip"></div>
     `;
     this.canvas = this.root.querySelector(".world-canvas") as HTMLCanvasElement;
     this.panel = this.root.querySelector(".editor-panel") as HTMLElement;
+    this.utility = this.root.querySelector(".utility-layer") as HTMLElement;
+    this.loadStoredProject();
     this.scene = new LevelScene(this.canvas, this.classDefinitions, this.environmentMaterials, this.propDefinitions);
     this.scene.onTileClick((coord) => this.handleTileClick(coord));
     this.render(true);
@@ -488,6 +571,368 @@ export class EditorApp {
 
   private selectedProp(): PropDefinition {
     return this.propDefinitions.find((prop) => prop.id === this.state.obstacle) ?? this.propDefinitions[0];
+  }
+
+  private loadStoredProject(): void {
+    const stored = readStoredJson<EditorProjectBundle>(editorProjectStorageKey);
+    if (!stored) {
+      return;
+    }
+    if (stored.levels?.length) {
+      this.levels = stored.levels.map((level) => normalizeLevelData(level));
+    } else if (stored.level) {
+      this.levels = [normalizeLevelData(stored.level)];
+    }
+    if (stored.campaign) {
+      this.campaign = normalizeCampaignData(stored.campaign, this.levels);
+    }
+    const incomingMaterials = stored.terrainMaterials ?? stored.environmentMaterials;
+    if (incomingMaterials?.length) {
+      this.environmentMaterials = mergeMaterialDefinitions(defaultEnvironmentMaterials, incomingMaterials);
+    }
+    const incomingProps = stored.props ?? stored.propDefinitions;
+    if (incomingProps?.length) {
+      this.propDefinitions = mergePropDefinitions(defaultPropDefinitions, incomingProps);
+    }
+    const incomingClasses = stored.classes ?? stored.classDefinitions;
+    if (incomingClasses?.length) {
+      this.classDefinitions = mergeClassDefinitions(defaultClassDefinitions, incomingClasses);
+    }
+    if (stored.templates?.length) {
+      this.templates = stored.templates.map((template) => structuredClone(template));
+    }
+    this.state.levelId = this.levels.find((level) => level.id === this.campaign.startLevel)?.id ?? this.levels[0]?.id ?? this.state.levelId;
+    this.state.templateId = this.templates[1]?.id ?? this.templates[0]?.id ?? this.state.templateId;
+    this.state.classId = this.classDefinitions[0]?.id ?? this.state.classId;
+    this.state.terrain = this.environmentMaterials[0]?.id ?? this.state.terrain;
+    this.state.obstacle = this.propDefinitions[0]?.id ?? this.state.obstacle;
+  }
+
+  private editorBundle(): EditorProjectBundle {
+    return {
+      campaign: this.campaign,
+      levels: this.levels,
+      level: this.currentLevel(),
+      templates: this.templates,
+      classes: this.classDefinitions,
+      terrainMaterials: this.environmentMaterials,
+      props: this.propDefinitions
+    };
+  }
+
+  private editorJson(): string {
+    return JSON.stringify(this.editorBundle(), null, 2);
+  }
+
+  private levelOptions(selectedId: string, includeEnd = false): string {
+    return `${includeEnd ? `<option value="">Campaign End</option>` : ""}${this.levels
+      .map((level) => `<option value="${escapeHtml(level.id)}" ${level.id === selectedId ? "selected" : ""}>${escapeHtml(level.name)}</option>`)
+      .join("")}`;
+  }
+
+  private downloadJsonFile(filename: string, json: string): void {
+    const blob = new Blob([json], { type: "application/json" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = filename;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(link.href);
+  }
+
+  private openUtility(html: string): void {
+    this.utility.className = "utility-layer open";
+    this.utility.innerHTML = html;
+    this.utility.querySelectorAll<HTMLButtonElement>("[data-utility-action]").forEach((button) => {
+      button.addEventListener("click", () => this.handleUtilityAction(button.dataset.utilityAction ?? "", button.dataset.levelId));
+    });
+    this.utility.onclick = (event) => {
+      if (event.target === this.utility) {
+        this.closeUtility();
+      }
+    };
+  }
+
+  private closeUtility(): void {
+    this.utility.className = "utility-layer";
+    this.utility.innerHTML = "";
+  }
+
+  private openLevelFlowEditor(): void {
+    const startLevel = this.levels.some((level) => level.id === this.campaign.startLevel) ? this.campaign.startLevel : this.levels[0].id;
+    this.openUtility(`
+      <div class="utility-modal flow-modal" role="dialog" aria-modal="true" aria-label="Level flow editor">
+        <div class="utility-head">
+          <div>
+            <span>Campaign Utility</span>
+            <h2>Level Flow</h2>
+          </div>
+          <button data-utility-action="close">Close</button>
+        </div>
+        <div class="compact-grid">
+          <label class="field">
+            <span>Campaign ID</span>
+            <input data-flow-campaign="id" type="text" value="${escapeHtml(this.campaign.id)}">
+          </label>
+          <label class="field">
+            <span>Campaign Title</span>
+            <input data-flow-campaign="title" type="text" value="${escapeHtml(this.campaign.title)}">
+          </label>
+          <label class="field">
+            <span>Start Level</span>
+            <select data-flow-campaign="startLevel">${this.levelOptions(startLevel)}</select>
+          </label>
+          <label class="field">
+            <span>Total Missions</span>
+            <input type="text" value="${this.levels.length}" disabled>
+          </label>
+        </div>
+        <div class="flow-list">
+          ${this.levels
+            .map((level, index) => {
+              const refNext = this.campaign.levels.find((entry) => entry.id === level.id)?.next[0] ?? "";
+              const nextId = level.links[0]?.to ?? refNext;
+              return `
+                <div class="flow-row" data-flow-row data-level-id="${escapeHtml(level.id)}">
+                  <strong>${index + 1}</strong>
+                  <label>
+                    <span>Name</span>
+                    <input data-flow-field="name" type="text" value="${escapeHtml(level.name)}">
+                  </label>
+                  <label>
+                    <span>ID</span>
+                    <input data-flow-field="id" type="text" value="${escapeHtml(level.id)}">
+                  </label>
+                  <label>
+                    <span>Next</span>
+                    <select data-flow-field="next">${this.levelOptions(nextId, true)}</select>
+                  </label>
+                  <button data-utility-action="open-level" data-level-id="${escapeHtml(level.id)}">Open</button>
+                </div>
+              `;
+            })
+            .join("")}
+        </div>
+        <div class="utility-actions">
+          <button data-utility-action="add-flow-level">Add Blank Level</button>
+          <button data-utility-action="apply-flow">Apply Flow</button>
+        </div>
+      </div>
+    `);
+  }
+
+  private openTitleEditor(): void {
+    const settings = normalizeTitleScreenSettings(this.campaign.titleScreen, this.campaign.startLevel);
+    this.openUtility(`
+      <div class="utility-modal title-editor-modal" role="dialog" aria-modal="true" aria-label="Title screen editor">
+        <div class="utility-head">
+          <div>
+            <span>Client Utility</span>
+            <h2>Title Screen</h2>
+          </div>
+          <button data-utility-action="close">Close</button>
+        </div>
+        <div class="compact-grid">
+          <label class="field">
+            <span>Kicker</span>
+            <input data-title-field="kicker" type="text" value="${escapeHtml(settings.kicker)}">
+          </label>
+          <label class="field">
+            <span>Headline</span>
+            <input data-title-field="headline" type="text" value="${escapeHtml(settings.headline)}">
+          </label>
+          <label class="field title-wide">
+            <span>Subtitle</span>
+            <textarea class="story-textarea" data-title-field="subhead">${escapeHtml(settings.subhead)}</textarea>
+          </label>
+          <label class="field">
+            <span>Backdrop Level</span>
+            <select data-title-field="backgroundLevelId">${this.levelOptions(settings.backgroundLevelId)}</select>
+          </label>
+          <label class="field">
+            <span>Orbit Speed</span>
+            <input data-title-field="orbitSpeed" type="number" min="0.01" max="0.4" step="0.01" value="${settings.orbitSpeed}">
+          </label>
+        </div>
+        <label class="check-row">
+          <input data-title-field="cameraOrbit" type="checkbox" ${settings.cameraOrbit ? "checked" : ""}>
+          <span>Slowly orbit the selected backdrop level while the title menu is open.</span>
+        </label>
+        <label class="check-row">
+          <input data-title-field="mockBattle" type="checkbox" ${settings.mockBattle ? "checked" : ""}>
+          <span>Loop class-based move, attack, and rotate callouts over the title scene.</span>
+        </label>
+        <div class="title-preview-note">
+          <strong>Visual editing loop</strong>
+          <span>Open the backdrop level here, edit it with the normal terrain, unit, prop, and story tools, then export the campaign JSON.</span>
+        </div>
+        <div class="utility-actions">
+          <button data-utility-action="preview-title-level">Open Backdrop Level</button>
+          <button data-utility-action="apply-title">Apply Title Screen</button>
+        </div>
+      </div>
+    `);
+  }
+
+  private handleUtilityAction(action: string, levelId?: string): void {
+    if (action === "close") {
+      this.closeUtility();
+    } else if (action === "open-level" && levelId) {
+      this.state.levelId = levelId;
+      this.state.selected = undefined;
+      this.render(true);
+      this.flash(`Opened ${this.currentLevel().name}.`);
+    } else if (action === "add-flow-level") {
+      this.addBlankLevel();
+      this.openLevelFlowEditor();
+      this.flash("Added a blank level to the flow.");
+    } else if (action === "apply-flow") {
+      this.applyLevelFlowEditor();
+    } else if (action === "apply-title") {
+      this.applyTitleEditor();
+    } else if (action === "preview-title-level") {
+      const levelSelect = this.utility.querySelector<HTMLSelectElement>("[data-title-field='backgroundLevelId']");
+      const nextLevelId = levelSelect?.value;
+      if (nextLevelId && this.levels.some((level) => level.id === nextLevelId)) {
+        this.state.levelId = nextLevelId;
+        this.state.selected = undefined;
+        this.render(true);
+        this.flash("Opened the title backdrop level for visual editing.");
+      }
+    }
+  }
+
+  private addBlankLevel(): void {
+    const id = this.uniqueLevelId(`level-${this.levels.length + 1}`);
+    const name = `New Level ${this.levels.length + 1}`;
+    const level = normalizeLevelData({
+      id,
+      name,
+      width: 10,
+      depth: 8,
+      environment: structuredClone(defaultEnvironmentSettings),
+      tiles: makeTiles(10, 8),
+      obstacles: [],
+      surroundings: [],
+      units: [],
+      objectives: [{ type: "defeatTeam", team: "enemy" }],
+      links: [],
+      story: []
+    });
+    const previous = this.levels[this.levels.length - 1];
+    if (previous && previous.links.length === 0) {
+      previous.links = [{ id: `${previous.id}-next`, label: `Continue to ${name}`, to: id }];
+    }
+    this.levels.push(level);
+    const previousRef = this.campaign.levels[this.campaign.levels.length - 1];
+    if (previousRef && previousRef.next.length === 0) {
+      previousRef.next = [id];
+    }
+    this.campaign.levels.push({ id, file: `levels/${id}.json`, next: [] });
+    this.state.levelId = id;
+    this.state.selected = undefined;
+    this.render(true);
+  }
+
+  private applyLevelFlowEditor(): void {
+    const rows = [...this.utility.querySelectorAll<HTMLElement>("[data-flow-row]")];
+    if (rows.length === 0) {
+      return;
+    }
+
+    const oldToNew = new Map<string, string>();
+    const usedIds = new Set<string>();
+    for (const row of rows) {
+      const oldId = row.dataset.levelId ?? "";
+      const name = row.querySelector<HTMLInputElement>("[data-flow-field='name']")?.value.trim() || "Level";
+      const requestedId = row.querySelector<HTMLInputElement>("[data-flow-field='id']")?.value.trim() || name;
+      const baseId = levelIdFromName(requestedId);
+      let nextId = baseId;
+      let suffix = 2;
+      while (usedIds.has(nextId)) {
+        nextId = `${baseId}-${suffix}`;
+        suffix += 1;
+      }
+      usedIds.add(nextId);
+      oldToNew.set(oldId, nextId);
+    }
+
+    const updatedLevels = rows.map((row) => {
+      const oldId = row.dataset.levelId ?? "";
+      const source = this.levels.find((level) => level.id === oldId) ?? this.currentLevel();
+      const name = row.querySelector<HTMLInputElement>("[data-flow-field='name']")?.value.trim() || source.name;
+      const id = oldToNew.get(oldId) ?? source.id;
+      const nextOldId = row.querySelector<HTMLSelectElement>("[data-flow-field='next']")?.value ?? "";
+      const nextId = nextOldId ? oldToNew.get(nextOldId) ?? nextOldId : "";
+      return normalizeLevelData({
+        ...source,
+        id,
+        name,
+        links: nextId ? [{ id: `${id}-next`, label: `Continue to ${nextId}`, to: nextId }] : []
+      });
+    });
+
+    const nameById = new Map(updatedLevels.map((level) => [level.id, level.name]));
+    const polishedLevels = updatedLevels.map((level) => ({
+      ...level,
+      links: level.links.map((link) => ({
+        ...link,
+        label: `Continue to ${nameById.get(link.to) ?? link.to}`
+      }))
+    }));
+
+    const campaignIdInput = this.utility.querySelector<HTMLInputElement>("[data-flow-campaign='id']");
+    const campaignTitleInput = this.utility.querySelector<HTMLInputElement>("[data-flow-campaign='title']");
+    const startInput = this.utility.querySelector<HTMLSelectElement>("[data-flow-campaign='startLevel']");
+    const startLevel = oldToNew.get(startInput?.value ?? "") ?? updatedLevels[0].id;
+    const titleScreen = normalizeTitleScreenSettings(this.campaign.titleScreen, startLevel);
+    titleScreen.backgroundLevelId = oldToNew.get(titleScreen.backgroundLevelId) ?? titleScreen.backgroundLevelId;
+    if (!polishedLevels.some((level) => level.id === titleScreen.backgroundLevelId)) {
+      titleScreen.backgroundLevelId = startLevel;
+    }
+
+    this.levels = polishedLevels;
+    this.campaign = {
+      ...this.campaign,
+      id: levelIdFromName(campaignIdInput?.value || this.campaign.id),
+      title: campaignTitleInput?.value.trim() || this.campaign.title,
+      startLevel,
+      titleScreen,
+      levels: polishedLevels.map((level) => ({
+        id: level.id,
+        file: `levels/${level.id}.json`,
+        next: level.links[0]?.to ? [level.links[0].to] : []
+      }))
+    };
+    this.state.levelId = oldToNew.get(this.state.levelId) ?? startLevel;
+    this.state.selected = undefined;
+    this.closeUtility();
+    this.render(true);
+    this.flash("Updated campaign flow.");
+  }
+
+  private applyTitleEditor(): void {
+    const field = <T extends HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>(name: string) =>
+      this.utility.querySelector<T>(`[data-title-field='${name}']`);
+    const backgroundLevelId = field<HTMLSelectElement>("backgroundLevelId")?.value || this.campaign.startLevel;
+    this.campaign = {
+      ...this.campaign,
+      titleScreen: {
+        kicker: field<HTMLInputElement>("kicker")?.value.trim() || "Voxel tactics prototype",
+        headline: field<HTMLInputElement>("headline")?.value.trim() || "Craft Heroes",
+        subhead:
+          field<HTMLTextAreaElement>("subhead")?.value.trim() ||
+          "Rotate class faces, chain handmade levels, and test the build language for a Steam-ready tactics pitch.",
+        backgroundLevelId,
+        cameraOrbit: field<HTMLInputElement>("cameraOrbit")?.checked ?? true,
+        orbitSpeed: Math.max(0.01, Math.min(0.4, numberOrFallback(field<HTMLInputElement>("orbitSpeed")?.value, 0.08))),
+        mockBattle: field<HTMLInputElement>("mockBattle")?.checked ?? true
+      }
+    };
+    this.closeUtility();
+    this.updatePanel();
+    this.flash("Updated title screen settings.");
   }
 
   private propRotationAngle(): number {
@@ -536,6 +981,17 @@ export class EditorApp {
     let id = baseId;
     let index = 2;
     while (this.propDefinitions.some((prop) => prop.id === id)) {
+      id = `${baseId}-${index}`;
+      index += 1;
+    }
+    return id;
+  }
+
+  private uniqueLevelId(name: string): string {
+    const baseId = levelIdFromName(name);
+    let id = baseId;
+    let index = 2;
+    while (this.levels.some((level) => level.id === id)) {
       id = `${baseId}-${index}`;
       index += 1;
     }
@@ -855,19 +1311,7 @@ export class EditorApp {
     const selectedObstacle = this.state.selected
       ? level.obstacles.find((obstacle) => obstacle.x === this.state.selected?.x && obstacle.z === this.state.selected?.z)
       : undefined;
-    const json = JSON.stringify(
-      {
-        campaign: this.campaign,
-        levels: this.levels,
-        level,
-        templates: this.templates,
-        classes: this.classDefinitions,
-        terrainMaterials: this.environmentMaterials,
-        props: this.propDefinitions
-      },
-      null,
-      2
-    );
+    const json = this.editorJson();
     const libraryCards = [
       { label: "Classes", count: this.classDefinitions.length, details: this.classDefinitions.map((item) => item.name).join(", ") },
       { label: "Builds", count: this.templates.length, details: this.templates.map((item) => item.name).join(", ") },
@@ -1511,6 +1955,12 @@ export class EditorApp {
         <button data-action="load-sample">Reset Samples</button>
       </div>
 
+      <div class="button-row">
+        <button data-action="open-flow-editor">Level Flow</button>
+        <button data-action="open-title-editor">Title Screen</button>
+        <button data-action="download-json">Export JSON</button>
+      </div>
+
       <label class="field">
         <span>Export / Import Current Level + Campaign</span>
         <textarea data-json>${json}</textarea>
@@ -1960,6 +2410,7 @@ export class EditorApp {
     } else if (action === "save-local") {
       saveLevel(this.currentLevel());
       saveCampaign(this.campaign);
+      localStorage.setItem(editorProjectStorageKey, this.editorJson());
       localStorage.setItem(templatesStorageKey, JSON.stringify(this.templates, null, 2));
       localStorage.setItem(classesStorageKey, JSON.stringify(this.classDefinitions, null, 2));
       localStorage.setItem(materialsStorageKey, JSON.stringify(this.environmentMaterials, null, 2));
@@ -1982,7 +2433,15 @@ export class EditorApp {
       this.scene.setClassDefinitions(this.classDefinitions);
       this.scene.setEnvironmentMaterials(this.environmentMaterials);
       this.scene.setPropDefinitions(this.propDefinitions);
+      localStorage.removeItem(editorProjectStorageKey);
       this.render(true);
+    } else if (action === "open-flow-editor") {
+      this.openLevelFlowEditor();
+    } else if (action === "open-title-editor") {
+      this.openTitleEditor();
+    } else if (action === "download-json") {
+      this.downloadJsonFile(safeFileName(this.campaign.id || "craft-heroes-campaign"), this.editorJson());
+      this.flash("Exported campaign JSON.");
     } else if (action === "copy-json") {
       const textarea = this.panel.querySelector<HTMLTextAreaElement>("[data-json]");
       if (textarea) {

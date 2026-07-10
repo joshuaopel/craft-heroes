@@ -555,6 +555,15 @@ export const defaultCampaign: CampaignData = {
   id: "craft-heroes-demo",
   title: "Craft Heroes Demo Campaign",
   startLevel: "forest-pass-01",
+  titleScreen: {
+    kicker: "Voxel tactics prototype",
+    headline: "Craft Heroes",
+    subhead: "Rotate class faces, chain handmade levels, and test the build language for a Steam-ready tactics pitch.",
+    backgroundLevelId: "forest-pass-01",
+    cameraOrbit: true,
+    orbitSpeed: 0.08,
+    mockBattle: true
+  },
   levels: [
     { id: "forest-pass-01", file: "levels/forest-pass-01.json", next: ["ridge-ambush-02"] },
     { id: "ridge-ambush-02", file: "levels/ridge-ambush-02.json", next: [] }

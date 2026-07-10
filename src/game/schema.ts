@@ -201,10 +201,21 @@ export interface CampaignLevelRef {
   next: string[];
 }
 
+export interface TitleScreenSettings {
+  kicker: string;
+  headline: string;
+  subhead: string;
+  backgroundLevelId: string;
+  cameraOrbit: boolean;
+  orbitSpeed: number;
+  mockBattle: boolean;
+}
+
 export interface CampaignData {
   id: string;
   title: string;
   startLevel: string;
+  titleScreen?: TitleScreenSettings;
   levels: CampaignLevelRef[];
 }
 

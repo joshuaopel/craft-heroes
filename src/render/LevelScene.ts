@@ -146,6 +146,8 @@ export class LevelScene {
   private clickHandler?: ClickHandler;
   private environmentWindStrength = fallbackEnvironment.windStrength;
   private environmentWindSpeed = fallbackEnvironment.windSpeed;
+  private titleOrbitActive = false;
+  private titleOrbitSpeed = 0.08;
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
@@ -198,6 +200,11 @@ export class LevelScene {
 
   setInteractionEnabled(enabled: boolean): void {
     this.controls.enabled = enabled;
+  }
+
+  setTitleOrbit(enabled: boolean, speed = 0.08): void {
+    this.titleOrbitActive = enabled;
+    this.titleOrbitSpeed = Math.max(0.01, Math.min(0.4, speed));
   }
 
   setSelected(coord?: TileCoord): void {
@@ -1360,9 +1367,22 @@ export class LevelScene {
   private animate(): void {
     const elapsed = this.clock.getElapsedTime();
     this.updateAnimatedEnvironment(elapsed);
+    this.updateTitleOrbit(elapsed);
     this.controls.update();
     this.renderer.render(this.scene, this.camera);
     requestAnimationFrame(() => this.animate());
+  }
+
+  private updateTitleOrbit(elapsed: number): void {
+    if (!this.titleOrbitActive || !this.level) {
+      return;
+    }
+    const radius = Math.max(7.2, Math.max(this.level.width, this.level.depth) * 0.82);
+    const phase = elapsed * this.titleOrbitSpeed;
+    const target = new THREE.Vector3(0, 0.78, 0);
+    this.controls.target.copy(target);
+    this.camera.position.set(Math.cos(phase) * radius, 5.4, Math.sin(phase) * radius);
+    this.camera.lookAt(target);
   }
 
   private updateAnimatedEnvironment(elapsed: number): void {

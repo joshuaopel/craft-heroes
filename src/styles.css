@@ -493,6 +493,119 @@ textarea {
   white-space: nowrap;
 }
 
+.utility-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(5, 8, 9, 0.62);
+  backdrop-filter: blur(5px);
+}
+
+.utility-layer.open {
+  display: flex;
+}
+
+.utility-modal {
+  width: min(980px, 100%);
+  max-height: calc(100vh - 40px);
+  display: grid;
+  gap: 14px;
+  overflow: auto;
+  padding: 18px;
+  border: 1px solid rgba(238, 247, 239, 0.22);
+  border-radius: 8px;
+  background: rgba(12, 17, 18, 0.96);
+  box-shadow: 0 28px 90px rgba(0, 0, 0, 0.55);
+}
+
+.utility-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.utility-head span {
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.utility-head h2 {
+  margin: 3px 0 0;
+  font-size: 24px;
+  line-height: 1.1;
+}
+
+.flow-list {
+  display: grid;
+  gap: 8px;
+}
+
+.flow-row {
+  display: grid;
+  grid-template-columns: 32px minmax(120px, 1fr) minmax(120px, 1fr) minmax(140px, 1fr) 74px;
+  gap: 8px;
+  align-items: end;
+  padding: 9px;
+  border: 1px solid rgba(238, 247, 239, 0.12);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.flow-row strong {
+  align-self: center;
+  color: var(--accent);
+}
+
+.flow-row label {
+  display: grid;
+  gap: 5px;
+}
+
+.flow-row label span {
+  color: var(--muted);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.utility-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px;
+  justify-content: flex-end;
+}
+
+.title-wide {
+  grid-column: 1 / -1;
+}
+
+.title-preview-note {
+  display: grid;
+  gap: 3px;
+  padding: 10px;
+  border: 1px solid rgba(96, 215, 228, 0.24);
+  border-radius: 7px;
+  background: rgba(96, 215, 228, 0.08);
+}
+
+.title-preview-note strong {
+  color: var(--accent);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.title-preview-note span {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
 .status-chip {
   position: absolute;
   left: 16px;
@@ -882,6 +995,25 @@ textarea {
 
   .editor-column {
     overflow: visible;
+  }
+
+  .utility-layer {
+    align-items: flex-end;
+    padding: 10px;
+  }
+
+  .utility-modal {
+    max-height: 84vh;
+    padding: 14px;
+  }
+
+  .flow-row {
+    grid-template-columns: 28px 1fr;
+  }
+
+  .flow-row label,
+  .flow-row button {
+    grid-column: 1 / -1;
   }
 
   .status-chip {

@@ -15,11 +15,28 @@ import type {
   PropDefinition,
   SectionName,
   StoryBeat,
+  TitleScreenSettings,
   TileCoord
 } from "../game/schema";
 import { LevelScene } from "../render/LevelScene";
 
 const sectionNames: SectionName[] = ["head", "body", "legs"];
+
+function titleScreenSettings(campaign: CampaignData): TitleScreenSettings {
+  const fallback = defaultCampaign.titleScreen;
+  return {
+    kicker: campaign.titleScreen?.kicker || fallback?.kicker || "Voxel tactics prototype",
+    headline: campaign.titleScreen?.headline || fallback?.headline || "Craft Heroes",
+    subhead:
+      campaign.titleScreen?.subhead ||
+      fallback?.subhead ||
+      "Rotate class faces, chain handmade levels, and test the build language for a Steam-ready tactics pitch.",
+    backgroundLevelId: campaign.titleScreen?.backgroundLevelId || fallback?.backgroundLevelId || campaign.startLevel,
+    cameraOrbit: campaign.titleScreen?.cameraOrbit ?? fallback?.cameraOrbit ?? true,
+    orbitSpeed: Math.max(0.01, Math.min(0.4, Number(campaign.titleScreen?.orbitSpeed ?? fallback?.orbitSpeed ?? 0.08))),
+    mockBattle: campaign.titleScreen?.mockBattle ?? fallback?.mockBattle ?? true
+  };
+}
 
 export interface ClientBundle {
   campaign?: CampaignData;
@@ -141,6 +158,9 @@ export class ClientApp {
   private advancingAfterStory = false;
   private started = false;
   private titleOpen = false;
+  private titleDemoTimer?: number;
+  private titleDemoIndex = 0;
+  private titlePreviewLevel?: LevelData;
 
   constructor(
     private readonly root: HTMLElement,
@@ -220,7 +240,7 @@ export class ClientApp {
         } else if (action === "editor") {
           window.location.href = window.location.pathname;
         } else if (action === "menu") {
-          this.showTitleScreen();
+          this.showTitleScreen("", { useTitleBackdrop: false });
         } else if (action === "complete") {
           this.completeLevel();
         } else if (action === "move" || action === "attack" || action === "rotate") {
@@ -269,6 +289,10 @@ export class ClientApp {
         id: "loaded-campaign",
         title: "Loaded Craft Heroes Campaign",
         startLevel: this.levels[0].id,
+        titleScreen: {
+          ...titleScreenSettings(defaultCampaign),
+          backgroundLevelId: this.levels[0].id
+        },
         levels: this.levels.map((level, index) => ({
           id: level.id,
           file: "",
@@ -387,8 +411,15 @@ export class ClientApp {
     }
   }
 
-  private showTitleScreen(message = ""): void {
+  private showTitleScreen(message = "", options: { useTitleBackdrop?: boolean } = {}): void {
     const save = this.readLocalSave();
+    const settings = titleScreenSettings(this.campaign);
+    if (options.useTitleBackdrop ?? true) {
+      this.activateTitleBackdrop(settings);
+    } else {
+      this.scene.setTitleOrbit(false);
+      this.stopTitleDemoLoop();
+    }
     this.titleOpen = true;
     this.scene.setInteractionEnabled(false);
     this.storyLayer.className = "story-layer";
@@ -396,9 +427,9 @@ export class ClientApp {
     this.titleLayer.className = "title-layer open";
     this.titleLayer.innerHTML = `
       <div class="title-panel">
-        <span class="title-kicker">Voxel tactics prototype</span>
-        <h1>Craft Heroes</h1>
-        <p>Rotate class faces, chain handmade levels, and test the build language for a Steam-ready tactics pitch.</p>
+        <span class="title-kicker">${escapeHtml(settings.kicker)}</span>
+        <h1>${escapeHtml(settings.headline)}</h1>
+        <p>${escapeHtml(settings.subhead)}</p>
         ${message ? `<div class="title-message">${escapeHtml(message)}</div>` : ""}
         <div class="title-actions">
           <button data-title-action="new">New Game</button>
@@ -413,6 +444,51 @@ export class ClientApp {
       </div>
     `;
     this.bindTitleEvents();
+  }
+
+  private activateTitleBackdrop(settings: TitleScreenSettings): void {
+    const level =
+      this.levels.find((candidate) => candidate.id === settings.backgroundLevelId) ??
+      this.levels.find((candidate) => candidate.id === this.campaign.startLevel) ??
+      this.levels[0];
+    if (!level) {
+      return;
+    }
+    this.titlePreviewLevel = level;
+    this.scene.setLevel(level, { frame: true });
+    this.scene.setSelected(undefined);
+    this.updateHud(level);
+    this.scene.setInteractionEnabled(false);
+    this.scene.setTitleOrbit(settings.cameraOrbit, settings.orbitSpeed);
+    if (settings.mockBattle) {
+      this.startTitleDemoLoop(level);
+    } else {
+      this.stopTitleDemoLoop();
+    }
+  }
+
+  private startTitleDemoLoop(level: LevelData): void {
+    this.stopTitleDemoLoop();
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      return;
+    }
+    const actions = ["attack", "move", "rotate"] as const;
+    const tick = () => {
+      if (!this.titleOpen) {
+        return;
+      }
+      this.showActionFx(actions[this.titleDemoIndex % actions.length], level, { allowDuringTitle: true });
+      this.titleDemoIndex += 1;
+    };
+    window.setTimeout(tick, 650);
+    this.titleDemoTimer = window.setInterval(tick, 2100);
+  }
+
+  private stopTitleDemoLoop(): void {
+    if (this.titleDemoTimer !== undefined) {
+      window.clearInterval(this.titleDemoTimer);
+      this.titleDemoTimer = undefined;
+    }
   }
 
   private showOptionsScreen(): void {
@@ -470,6 +546,9 @@ export class ClientApp {
 
   private closeTitleScreen(): void {
     this.titleOpen = false;
+    this.stopTitleDemoLoop();
+    this.scene.setTitleOrbit(false);
+    this.titlePreviewLevel = undefined;
     this.titleLayer.className = "title-layer";
     this.titleLayer.innerHTML = "";
     this.scene.setInteractionEnabled(true);
@@ -487,6 +566,9 @@ export class ClientApp {
     }
     this.currentLevelId = level.id;
     this.advancingAfterStory = false;
+    this.scene.setTitleOrbit(false);
+    this.stopTitleDemoLoop();
+    this.titlePreviewLevel = undefined;
     this.scene.setLevel(level, { frame: true });
     this.scene.setSelected(undefined);
     this.updateHud(level);
@@ -550,8 +632,8 @@ export class ClientApp {
       .join("");
   }
 
-  private abilityForAction(action: "move" | "attack" | "rotate"): AbilityDefinition | undefined {
-    const level = this.currentLevel();
+  private abilityForAction(action: "move" | "attack" | "rotate", sourceLevel = this.currentLevel()): AbilityDefinition | undefined {
+    const level = sourceLevel;
     if (!level) {
       return undefined;
     }
@@ -564,11 +646,11 @@ export class ClientApp {
     return this.primaryAbilityForSection(level, "head");
   }
 
-  private showActionFx(action: "move" | "attack" | "rotate"): void {
-    if (this.titleOpen || this.storyQueue.length > 0) {
+  private showActionFx(action: "move" | "attack" | "rotate", sourceLevel = this.currentLevel(), options: { allowDuringTitle?: boolean } = {}): void {
+    if ((!options.allowDuringTitle && this.titleOpen) || this.storyQueue.length > 0) {
       return;
     }
-    const ability = this.abilityForAction(action);
+    const ability = this.abilityForAction(action, sourceLevel);
     const fallback = action === "move" ? "MV" : action === "attack" ? "AT" : "RT";
     const label = action === "move" ? "Movement preview" : action === "attack" ? "Attack preview" : "Face rotation preview";
     const color = ability?.color ?? (action === "attack" ? "#ff6d62" : action === "move" ? "#60d7e4" : "#f2bd55");
