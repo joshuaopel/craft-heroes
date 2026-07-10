@@ -13,6 +13,12 @@ npm run dev
 
 The editor opens at `index.html`. The standalone game client opens at `client.html`.
 
+## Guide
+
+See the living [Craft Heroes how-to guide](docs/craft-heroes-guide.md) for the
+current editor/client workflow, best practices, feature list, gameplay rules,
+content authoring notes, and screenshots.
+
 ## Standalone Client
 
 ```powershell
