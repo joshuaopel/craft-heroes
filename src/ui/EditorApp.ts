@@ -2389,7 +2389,7 @@ export class EditorApp {
         </label>
         <label class="check-row">
           <input data-prop="emitsLight" type="checkbox" ${currentProp.emitsLight ? "checked" : ""}>
-          <span>Emit light from this prop or uploaded GLB.</span>
+          <span>Emit light from this prop; GLBs use emissive materials or named markers when present.</span>
         </label>
         <div class="compact-grid">
           <label class="field">

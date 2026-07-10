@@ -253,13 +253,26 @@ Prop definition options:
 | Light Color | Color of emitted light. |
 | Light Intensity | Brightness of emitted light. |
 | Light Range | Radius/distance of emitted light. |
-| Light Offset Y | Fallback vertical light position when no GLB marker exists. |
+| Light Offset Y | Fallback vertical light position when no emissive GLB material or marker exists. |
 | Notes | Freeform tags or author notes. |
+
+GLB light-source priority:
+
+1. Emissive GLB materials. The renderer places the point light at the center of
+   the emissive mesh or emissive material group.
+2. Named light marker objects.
+3. `Light Offset Y` on the prop definition.
+
+For best alignment, put a small separate mesh on the ember/flame/bulb and give
+that mesh an emissive material in Blender before exporting the GLB. The runtime
+uses that emissive material as the light source and preserves the material as
+the visible glowing part.
 
 GLB light marker naming convention:
 
-If a prop has **Emits Light** enabled, the renderer looks for up to four GLB
-objects whose names contain one of these tokens:
+If no emissive material is found and a prop has **Emits Light** enabled, the
+renderer looks for up to four GLB objects whose names contain one of these
+tokens:
 
 ```text
 chlight, light, lightpoint, emit, emitter, emissive, ember, flame, glow
@@ -275,7 +288,8 @@ CHLight_Flame_01
 
 When a marker is found, only that marker area is treated as the light source.
 The marker material receives emissive coloring, and the point light is placed at
-the marker position. If no marker is found, the prop uses `Light Offset Y`.
+the marker position. If no emissive material or marker is found, the prop uses
+`Light Offset Y`.
 
 Best practices for props:
 
@@ -285,7 +299,10 @@ Best practices for props:
 - Use `blocker` for walls, trees, towers, and terrain-like obstructions.
 - Keep imported models centered around their origin when possible.
 - Prefer one tile per tactical prop. Use surroundings for large scenic dressing.
-- Name light-emitting submeshes clearly in Blender before export.
+- Prefer actual emissive materials for embers, flames, bulbs, crystals, and
+  other visible emitters.
+- Name light-emitting marker objects clearly in Blender when an emissive mesh is
+  not practical.
 
 ## Environment And Surroundings
 
