@@ -1112,22 +1112,22 @@ export class LevelScene {
         this.prepareModelInstance(instance, definition, resolvedScale);
         group.add(instance);
         if (!this.addPropLightsFromModelSources(group, instance, definition, resolvedScale, height)) {
-          this.addPropLight(group, definition, resolvedScale, height);
+          this.addPropLight(group, definition, resolvedScale, height, false);
         }
       }).catch((error) => {
-        this.addPropLight(group, definition, resolvedScale, height);
+        this.addPropLight(group, definition, resolvedScale, height, false);
         console.warn(`Unable to load prop model "${definition.name}".`, error);
       });
     }
     return group;
   }
 
-  private addPropLight(group: THREE.Group, definition: PropDefinition, scale: number, propHeight: number): void {
+  private addPropLight(group: THREE.Group, definition: PropDefinition, scale: number, propHeight: number, showGlow = true): void {
     if (!definition.emitsLight || definition.lightIntensity <= 0) {
       return;
     }
     const y = Math.max(0.02, Math.min(propHeight + 1.4, (definition.lightOffsetY || propHeight) * scale));
-    this.addPropLightAt(group, definition, scale, new THREE.Vector3(0, y, 0));
+    this.addPropLightAt(group, definition, scale, new THREE.Vector3(0, y, 0), undefined, showGlow);
   }
 
   private addPropLightsFromModelSources(
@@ -1150,7 +1150,7 @@ export class LevelScene {
     }
 
     for (const source of lightSources.slice(0, 4)) {
-      this.addPropLightAt(group, definition, scale, source.position, source.color);
+      this.addPropLightAt(group, definition, scale, source.position, source.color, false);
       if (source.fromEmissive) {
         this.prepareEmissiveSourceMaterial(source.object);
       } else {
@@ -1312,7 +1312,7 @@ export class LevelScene {
     return tokens.some((token) => glbLightMarkerTokens.has(token));
   }
 
-  private addPropLightAt(group: THREE.Group, definition: PropDefinition, scale: number, position: THREE.Vector3, colorOverride?: THREE.Color): void {
+  private addPropLightAt(group: THREE.Group, definition: PropDefinition, scale: number, position: THREE.Vector3, colorOverride?: THREE.Color, showGlow = true): void {
     if (!definition.emitsLight || definition.lightIntensity <= 0) {
       return;
     }
@@ -1320,6 +1320,10 @@ export class LevelScene {
     const light = new THREE.PointLight(color, definition.lightIntensity, definition.lightRange, 1.65);
     light.position.copy(position);
     group.add(light);
+
+    if (!showGlow) {
+      return;
+    }
 
     const glow = new THREE.Mesh(
       new THREE.SphereGeometry(0.06 * Math.max(0.75, scale), 10, 8),

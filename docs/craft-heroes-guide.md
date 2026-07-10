@@ -249,7 +249,7 @@ Prop definition options:
 | Blocks Line Of Sight | Marks the prop as a sight blocker for tactical rules. |
 | Cover Bonus | Numeric cover value for future defense/LOS rules. |
 | Wind Effect | Allows the prop/model to sway with environment wind. |
-| Emits Light | Enables a point light and glow marker. |
+| Emits Light | Enables a point light. Box props show a generated glow marker; GLBs use their own emissive/marker mesh visually. |
 | Light Color | Color of emitted light. |
 | Light Intensity | Brightness of emitted light. |
 | Light Range | Radius/distance of emitted light. |
@@ -266,7 +266,7 @@ GLB light-source priority:
 For best alignment, put a small separate mesh on the ember/flame/bulb and give
 that mesh an emissive material in Blender before exporting the GLB. The runtime
 uses that emissive material as the light source and preserves the material as
-the visible glowing part.
+the visible glowing part. GLB emitters do not get an extra generated orb.
 
 GLB light marker naming convention:
 
