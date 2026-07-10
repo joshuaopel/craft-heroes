@@ -32,7 +32,7 @@ async function boot(): Promise<void> {
     }
     const progress = await host?.loadProgress?.();
     if (progress) {
-      app.restoreSave(progress);
+      app.registerSave(progress);
     }
   } catch (error) {
     console.error("Unable to initialize the desktop host bridge.", error);

@@ -20,6 +20,8 @@ import {
   validateLevel
 } from "../game/levelOps";
 import type {
+  AbilityDefinition,
+  AbilityTrigger,
   CampaignData,
   ClassDefinition,
   ClassId,
@@ -46,6 +48,7 @@ import { LevelScene } from "../render/LevelScene";
 
 const directionLabels = ["S", "E", "N", "W"] as const;
 const sectionNames: SectionName[] = ["head", "body", "legs"];
+const abilityTriggers: AbilityTrigger[] = ["active", "passive", "onMove", "onAttack", "onDefend", "onSupport"];
 const statFields: Array<{ key: keyof ClassSectionStats; label: string }> = [
   { key: "attack", label: "ATK" },
   { key: "defense", label: "DEF" },
@@ -135,6 +138,36 @@ function normalizeStats(stats: Partial<ClassSectionStats> | undefined): ClassSec
   };
 }
 
+function idFromLabel(label: string, fallbackPrefix: string): string {
+  const slug = label
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return slug || `${fallbackPrefix}-${Date.now()}`;
+}
+
+function normalizeAbility(ability: Partial<AbilityDefinition>, index: number): AbilityDefinition {
+  const name = ability.name || ability.description || `Ability ${index + 1}`;
+  const trigger = abilityTriggers.includes(ability.trigger as AbilityTrigger) ? (ability.trigger as AbilityTrigger) : "passive";
+  return {
+    id: ability.id || idFromLabel(name, "ability"),
+    name,
+    trigger,
+    icon: (ability.icon || name.slice(0, 2) || "FX").toUpperCase().slice(0, 3),
+    color: isHexColor(ability.color) ? ability.color : "#60d7e4",
+    description: ability.description || "",
+    effect: ability.effect || ""
+  };
+}
+
+function normalizeAbilities(value: unknown): AbilityDefinition[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.map((ability, index) => normalizeAbility(ability as Partial<AbilityDefinition>, index));
+}
+
 function normalizeSurfaceEffect(value: unknown): EnvironmentSurfaceEffect {
   return value === "grass" || value === "water" || value === "solid" ? value : "solid";
 }
@@ -165,6 +198,7 @@ function normalizeClassDefinition(classDefinition: ClassDefinition): ClassDefini
     sections[section] = {
       imageUrl: typeof sourceSection.imageUrl === "string" ? sourceSection.imageUrl : "",
       stats: normalizeStats(sourceSection.stats),
+      abilities: normalizeAbilities(sourceSection.abilities),
       conditions: Array.isArray(sourceSection.conditions) ? sourceSection.conditions.map(String).filter(Boolean) : []
     };
   }
@@ -334,6 +368,43 @@ function initialTemplates(): UnitTemplate[] {
 
 function conditionsToText(conditions: string[]): string {
   return conditions.join("; ");
+}
+
+function abilitiesToText(abilities: AbilityDefinition[]): string {
+  return abilities
+    .map((ability) =>
+      [ability.name, ability.trigger, ability.icon, ability.color, ability.description, ability.effect]
+        .map((part) => part.trim())
+        .join(" | ")
+    )
+    .join("\n");
+}
+
+function textToAbilities(value: string, fallback: AbilityDefinition[] = []): AbilityDefinition[] {
+  const entries = value
+    .split(/[;\n]+/)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  if (entries.length === 0) {
+    return fallback;
+  }
+  return entries.map((entry, index) => {
+    const [name = `Ability ${index + 1}`, trigger = "passive", icon = "", color = "#60d7e4", description = "", effect = ""] = entry
+      .split("|")
+      .map((part) => part.trim());
+    return normalizeAbility(
+      {
+        id: idFromLabel(name, "ability"),
+        name,
+        trigger: abilityTriggers.includes(trigger as AbilityTrigger) ? (trigger as AbilityTrigger) : "passive",
+        icon,
+        color,
+        description,
+        effect
+      },
+      index
+    );
+  });
 }
 
 function textToConditions(value: string): string[] {
@@ -522,7 +593,9 @@ export class EditorApp {
         const value = numberOrFallback(input?.value, sections[section].stats[stat.key]);
         sections[section].stats[stat.key] = Math.max(0, Math.min(12, value));
       }
+      const abilitiesInput = this.panel.querySelector<HTMLTextAreaElement>(`[data-class-section='${section}'][data-ability]`);
       const conditionsInput = this.panel.querySelector<HTMLInputElement>(`[data-class-section='${section}'][data-condition]`);
+      sections[section].abilities = textToAbilities(abilitiesInput?.value ?? abilitiesToText(sections[section].abilities), sections[section].abilities);
       sections[section].conditions = textToConditions(conditionsInput?.value ?? conditionsToText(sections[section].conditions));
     }
     return normalizeClassDefinition({
@@ -795,7 +868,14 @@ export class EditorApp {
       null,
       2
     );
+    const libraryCards = [
+      { label: "Classes", count: this.classDefinitions.length, details: this.classDefinitions.map((item) => item.name).join(", ") },
+      { label: "Builds", count: this.templates.length, details: this.templates.map((item) => item.name).join(", ") },
+      { label: "Props", count: this.propDefinitions.length, details: this.propDefinitions.map((item) => item.name).join(", ") },
+      { label: "Materials", count: this.environmentMaterials.length, details: this.environmentMaterials.map((item) => item.name).join(", ") }
+    ];
     this.panel.innerHTML = `
+      <div class="editor-column editor-column-left">
       <div class="panel-head">
         <div>
           <h1>Craft Heroes Editor</h1>
@@ -1035,6 +1115,33 @@ export class EditorApp {
               `
             )
             .join("") || `<span class="empty-note">No story beats in this level.</span>`}
+        </div>
+      </section>
+
+      </div>
+      <div class="editor-column editor-column-right">
+      <section class="control-section library-section">
+        <div class="section-title">
+          <strong>Content Library</strong>
+          <span>Reusable content for building scenarios, enemy loadouts, props, terrain, and class faces.</span>
+        </div>
+        <div class="library-grid">
+          ${libraryCards
+            .map(
+              (card) => `
+                <div class="library-card">
+                  <strong>${card.count}</strong>
+                  <span>${escapeHtml(card.label)}</span>
+                  <small>${escapeHtml(card.details || "None yet")}</small>
+                </div>
+              `
+            )
+            .join("")}
+        </div>
+        <div class="role-strip">
+          <div><b>Head</b><span>Targeting, awareness, support, passive reads.</span></div>
+          <div><b>Body / Arms</b><span>Attack shape, defense posture, cast or swing actions.</span></div>
+          <div><b>Legs</b><span>Movement range, terrain rules, evasion, post-move pivots.</span></div>
         </div>
       </section>
 
@@ -1333,6 +1440,10 @@ export class EditorApp {
                     <span>Conditions</span>
                     <input data-class-section="${section}" data-condition type="text" value="${escapeHtml(conditionsToText(sectionDefinition.conditions))}">
                   </label>
+                  <label class="field">
+                    <span>Abilities</span>
+                    <textarea class="ability-textarea" data-class-section="${section}" data-ability>${escapeHtml(abilitiesToText(sectionDefinition.abilities))}</textarea>
+                  </label>
                 </div>
               `;
             })
@@ -1414,6 +1525,7 @@ export class EditorApp {
       <ul class="warnings">
         ${(warnings.length ? warnings : ["Level validates for first-pass playtesting."]).map((warning) => `<li>${warning}</li>`).join("")}
       </ul>
+      </div>
     `;
 
     this.panel.querySelectorAll<HTMLButtonElement>("[data-tool]").forEach((button) => {

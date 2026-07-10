@@ -7,15 +7,19 @@ import {
   defaultPropDefinitions
 } from "../game/content";
 import type {
+  AbilityDefinition,
   CampaignData,
   ClassDefinition,
   EnvironmentMaterialDefinition,
   LevelData,
   PropDefinition,
+  SectionName,
   StoryBeat,
   TileCoord
 } from "../game/schema";
 import { LevelScene } from "../render/LevelScene";
+
+const sectionNames: SectionName[] = ["head", "body", "legs"];
 
 export interface ClientBundle {
   campaign?: CampaignData;
@@ -121,6 +125,10 @@ export class ClientApp {
   private readonly objective: HTMLElement;
   private readonly progress: HTMLElement;
   private readonly storyLayer: HTMLElement;
+  private readonly titleLayer: HTMLElement;
+  private readonly abilityStrip: HTMLElement;
+  private readonly fxLayer: HTMLElement;
+  private readonly footerLabel: HTMLElement;
   private readonly fileInput: HTMLInputElement;
   private campaign: CampaignData = structuredClone(defaultCampaign);
   private levels: LevelData[] = defaultLevels.map((level) => normalizeLevel(structuredClone(level)));
@@ -132,6 +140,7 @@ export class ClientApp {
   private shownStory = new Set<string>();
   private advancingAfterStory = false;
   private started = false;
+  private titleOpen = false;
 
   constructor(
     private readonly root: HTMLElement,
@@ -151,20 +160,31 @@ export class ClientApp {
         <div class="client-actions">
           ${showContentLoader ? `<button data-client-action="load">Load Game</button>` : ""}
           ${showEditorLink ? `<button data-client-action="editor">Editor</button>` : ""}
+          <button data-client-action="menu">Menu</button>
         </div>
       </div>
+      <div class="ability-strip" id="client-ability-strip"></div>
       <div class="client-footer">
-        <span>Awaiting orders</span>
+        <span id="client-footer-label">Awaiting orders</span>
+        <button data-client-action="move">Move FX</button>
+        <button data-client-action="attack">Attack FX</button>
+        <button data-client-action="rotate">Rotate FX</button>
         <button data-client-action="complete">Complete Mission</button>
       </div>
       <input class="visually-hidden" data-client-files type="file" accept=".json,application/json" multiple>
       <div class="story-layer" aria-live="polite"></div>
+      <div class="fx-layer" aria-hidden="true"></div>
+      <div class="title-layer open" aria-live="polite"></div>
     `;
     this.canvas = this.root.querySelector(".world-canvas") as HTMLCanvasElement;
     this.levelName = this.root.querySelector("#client-level-name") as HTMLElement;
     this.objective = this.root.querySelector("#client-objective") as HTMLElement;
     this.progress = this.root.querySelector("#client-progress") as HTMLElement;
     this.storyLayer = this.root.querySelector(".story-layer") as HTMLElement;
+    this.titleLayer = this.root.querySelector(".title-layer") as HTMLElement;
+    this.abilityStrip = this.root.querySelector("#client-ability-strip") as HTMLElement;
+    this.fxLayer = this.root.querySelector(".fx-layer") as HTMLElement;
+    this.footerLabel = this.root.querySelector("#client-footer-label") as HTMLElement;
     this.fileInput = this.root.querySelector("[data-client-files]") as HTMLInputElement;
     this.scene = new LevelScene(this.canvas, this.classDefinitions, this.environmentMaterials, this.propDefinitions);
     this.scene.setMode("play");
@@ -177,7 +197,8 @@ export class ClientApp {
       return;
     }
     this.started = true;
-    this.loadLevel(this.currentLevelId);
+    this.loadLevel(this.currentLevelId, { showStory: false });
+    this.showTitleScreen();
   }
 
   private bindEvents(): void {
@@ -198,8 +219,12 @@ export class ClientApp {
           }
         } else if (action === "editor") {
           window.location.href = window.location.pathname;
+        } else if (action === "menu") {
+          this.showTitleScreen();
         } else if (action === "complete") {
           this.completeLevel();
+        } else if (action === "move" || action === "attack" || action === "rotate") {
+          this.showActionFx(action);
         }
       });
     });
@@ -265,7 +290,9 @@ export class ClientApp {
         ? this.campaign.startLevel
         : this.levels[0].id;
       this.started = true;
-      this.loadLevel(startId);
+      this.currentLevelId = startId;
+      this.loadLevel(startId, { showStory: false });
+      this.showTitleScreen();
       return true;
     } catch (error) {
       this.showError(error instanceof Error ? error.message : "Unable to read campaign data.");
@@ -282,26 +309,177 @@ export class ClientApp {
     };
   }
 
+  registerSave(save: ClientSaveData): boolean {
+    if (!this.isCompatibleSave(save)) {
+      return false;
+    }
+    this.writeLocalSave(save);
+    if (this.titleOpen) {
+      this.showTitleScreen();
+    }
+    return true;
+  }
+
   restoreSave(save: ClientSaveData): boolean {
-    if (
-      save.version !== 1 ||
-      save.campaignId !== this.campaign.id ||
-      !this.levels.some((level) => level.id === save.currentLevelId)
-    ) {
+    if (!this.isCompatibleSave(save)) {
       return false;
     }
     this.storyQueue = [];
     this.shownStory = new Set(save.shownStory);
     this.started = true;
+    this.writeLocalSave(save);
+    this.closeTitleScreen();
     this.loadLevel(save.currentLevelId);
     return true;
+  }
+
+  private isCompatibleSave(save: ClientSaveData): boolean {
+    return save.version === 1 && save.campaignId === this.campaign.id && this.levels.some((level) => level.id === save.currentLevelId);
+  }
+
+  private saveSlotKey(): string {
+    return `craft-heroes-client-save:${this.campaign.id}`;
+  }
+
+  private readLocalSave(): ClientSaveData | undefined {
+    try {
+      const raw = localStorage.getItem(this.saveSlotKey());
+      if (!raw) {
+        return undefined;
+      }
+      const parsed = JSON.parse(raw) as ClientSaveData;
+      return parsed.version === 1 && parsed.campaignId === this.campaign.id ? parsed : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private writeLocalSave(save: ClientSaveData): void {
+    try {
+      localStorage.setItem(this.saveSlotKey(), JSON.stringify(save));
+    } catch {
+      // Local browser storage is best-effort; host saves still run below.
+    }
+  }
+
+  private clearLocalSave(): void {
+    try {
+      localStorage.removeItem(this.saveSlotKey());
+    } catch {
+      // Ignore storage failures.
+    }
+  }
+
+  private newGame(): void {
+    this.storyQueue = [];
+    this.shownStory.clear();
+    this.advancingAfterStory = false;
+    this.clearLocalSave();
+    this.closeTitleScreen();
+    this.loadLevel(this.campaign.startLevel);
+    this.notifyProgress();
+  }
+
+  private continueGame(): void {
+    const save = this.readLocalSave();
+    if (!save || !this.restoreSave(save)) {
+      this.showTitleScreen("No compatible save exists for this campaign yet.");
+    }
+  }
+
+  private showTitleScreen(message = ""): void {
+    const save = this.readLocalSave();
+    this.titleOpen = true;
+    this.scene.setInteractionEnabled(false);
+    this.storyLayer.className = "story-layer";
+    this.storyLayer.innerHTML = "";
+    this.titleLayer.className = "title-layer open";
+    this.titleLayer.innerHTML = `
+      <div class="title-panel">
+        <span class="title-kicker">Voxel tactics prototype</span>
+        <h1>Craft Heroes</h1>
+        <p>Rotate class faces, chain handmade levels, and test the build language for a Steam-ready tactics pitch.</p>
+        ${message ? `<div class="title-message">${escapeHtml(message)}</div>` : ""}
+        <div class="title-actions">
+          <button data-title-action="new">New Game</button>
+          <button data-title-action="continue" ${save ? "" : "disabled"}>Continue</button>
+          <button data-title-action="options">Options</button>
+          ${this.options.showContentLoader ?? true ? `<button data-title-action="load">Load Content</button>` : ""}
+        </div>
+        <div class="title-save">
+          <strong>${save ? "Save Found" : "No Save Yet"}</strong>
+          <span>${save ? `Continue from ${escapeHtml(save.currentLevelId)}` : "Start a new campaign to create a local save."}</span>
+        </div>
+      </div>
+    `;
+    this.bindTitleEvents();
+  }
+
+  private showOptionsScreen(): void {
+    this.titleOpen = true;
+    this.scene.setInteractionEnabled(false);
+    this.titleLayer.className = "title-layer open";
+    this.titleLayer.innerHTML = `
+      <div class="title-panel options-panel">
+        <span class="title-kicker">Options</span>
+        <h1>Preview Settings</h1>
+        <div class="options-grid">
+          <label class="check-row">
+            <input data-option-reduced-motion type="checkbox" ${window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "checked" : ""}>
+            <span>Respect reduced motion for menu and FX animation.</span>
+          </label>
+          <label class="check-row">
+            <input data-option-camera type="checkbox" checked>
+            <span>Enable orbit camera while playing.</span>
+          </label>
+        </div>
+        <div class="title-actions">
+          <button data-title-action="back">Back</button>
+        </div>
+      </div>
+    `;
+    this.bindTitleEvents();
+  }
+
+  private bindTitleEvents(): void {
+    this.titleLayer.querySelectorAll<HTMLButtonElement>("[data-title-action]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const action = button.dataset.titleAction;
+        if (action === "new") {
+          this.newGame();
+        } else if (action === "continue") {
+          this.continueGame();
+        } else if (action === "options") {
+          this.showOptionsScreen();
+        } else if (action === "back") {
+          this.showTitleScreen();
+        } else if (action === "load") {
+          if (this.options.requestContent) {
+            void this.options.requestContent().then((content) => {
+              if (content !== undefined) {
+                this.loadContent(content);
+              }
+            });
+          } else {
+            this.fileInput.click();
+          }
+        }
+      });
+    });
+  }
+
+  private closeTitleScreen(): void {
+    this.titleOpen = false;
+    this.titleLayer.className = "title-layer";
+    this.titleLayer.innerHTML = "";
+    this.scene.setInteractionEnabled(true);
   }
 
   private currentLevel(): LevelData | undefined {
     return this.levels.find((level) => level.id === this.currentLevelId);
   }
 
-  private loadLevel(levelId: string): void {
+  private loadLevel(levelId: string, options: { showStory?: boolean } = {}): void {
     const level = this.levels.find((candidate) => candidate.id === levelId) ?? this.levels[0];
     if (!level) {
       this.showError("No playable levels were found in those files.");
@@ -312,7 +490,12 @@ export class ClientApp {
     this.scene.setLevel(level, { frame: true });
     this.scene.setSelected(undefined);
     this.updateHud(level);
-    this.enqueueStory(level.story.filter((beat) => beat.trigger === "levelStart"));
+    if (options.showStory ?? true) {
+      this.enqueueStory(level.story.filter((beat) => beat.trigger === "levelStart"));
+    } else {
+      this.storyLayer.className = "story-layer";
+      this.storyLayer.innerHTML = "";
+    }
     this.invokeHost("presence", () =>
       this.options.onPresence?.({
         campaignId: this.campaign.id,
@@ -328,11 +511,88 @@ export class ClientApp {
     this.progress.textContent = `MISSION ${campaignIndex + 1} / ${Math.max(1, this.campaign.levels.length)}`;
     this.levelName.textContent = level.name;
     this.objective.textContent = objectiveLabel(level);
+    this.renderAbilityStrip(level);
+  }
+
+  private playerUnit(level: LevelData) {
+    return level.units.find((unit) => unit.team === "player") ?? level.units[0];
+  }
+
+  private classForId(classId: string): ClassDefinition {
+    return this.classDefinitions.find((classDefinition) => classDefinition.id === classId) ?? this.classDefinitions[0];
+  }
+
+  private frontClassForSection(level: LevelData, section: SectionName): ClassDefinition {
+    const unit = this.playerUnit(level);
+    const rotation = unit ? ((unit.rotations[section] % 4) + 4) % 4 : 0;
+    return this.classForId(unit?.faces[section][rotation] ?? this.classDefinitions[0].id);
+  }
+
+  private primaryAbilityForSection(level: LevelData, section: SectionName): AbilityDefinition | undefined {
+    const classDefinition = this.frontClassForSection(level, section);
+    return classDefinition.sections[section].abilities[0];
+  }
+
+  private renderAbilityStrip(level: LevelData): void {
+    this.abilityStrip.innerHTML = sectionNames
+      .map((section) => {
+        const classDefinition = this.frontClassForSection(level, section);
+        const ability = this.primaryAbilityForSection(level, section);
+        const label = section === "body" ? "Body / Arms" : section[0].toUpperCase() + section.slice(1);
+        return `
+          <div class="ability-chip" style="--ability-color: ${escapeHtml(ability?.color ?? classDefinition.color)}">
+            <b>${escapeHtml(label)}</b>
+            <span>${escapeHtml(classDefinition.name)}</span>
+            <em>${escapeHtml(ability ? `${ability.icon} ${ability.name}` : "No ability")}</em>
+          </div>
+        `;
+      })
+      .join("");
+  }
+
+  private abilityForAction(action: "move" | "attack" | "rotate"): AbilityDefinition | undefined {
+    const level = this.currentLevel();
+    if (!level) {
+      return undefined;
+    }
+    if (action === "move") {
+      return this.primaryAbilityForSection(level, "legs");
+    }
+    if (action === "attack") {
+      return this.primaryAbilityForSection(level, "body");
+    }
+    return this.primaryAbilityForSection(level, "head");
+  }
+
+  private showActionFx(action: "move" | "attack" | "rotate"): void {
+    if (this.titleOpen || this.storyQueue.length > 0) {
+      return;
+    }
+    const ability = this.abilityForAction(action);
+    const fallback = action === "move" ? "MV" : action === "attack" ? "AT" : "RT";
+    const label = action === "move" ? "Movement preview" : action === "attack" ? "Attack preview" : "Face rotation preview";
+    const color = ability?.color ?? (action === "attack" ? "#ff6d62" : action === "move" ? "#60d7e4" : "#f2bd55");
+    const chip = document.createElement("div");
+    chip.className = `action-fx action-fx-${action}`;
+    chip.style.setProperty("--fx-color", color);
+    chip.innerHTML = `
+      <strong>${escapeHtml(ability?.icon ?? fallback)}</strong>
+      <span>${escapeHtml(ability?.name ?? label)}</span>
+    `;
+    this.fxLayer.appendChild(chip);
+    this.canvas.classList.remove("fx-wobble");
+    void this.canvas.offsetWidth;
+    this.canvas.classList.add("fx-wobble");
+    this.footerLabel.textContent = ability?.description || label;
+    window.setTimeout(() => {
+      chip.remove();
+      this.canvas.classList.remove("fx-wobble");
+    }, 950);
   }
 
   private handleTile(coord: TileCoord): void {
     const level = this.currentLevel();
-    if (!level || this.storyQueue.length > 0) {
+    if (!level || this.titleOpen || this.storyQueue.length > 0) {
       return;
     }
     this.scene.setSelected(coord);
@@ -345,7 +605,7 @@ export class ClientApp {
 
   private completeLevel(): void {
     const level = this.currentLevel();
-    if (!level || this.storyQueue.length > 0) {
+    if (!level || this.titleOpen || this.storyQueue.length > 0) {
       return;
     }
     this.advancingAfterStory = true;
@@ -446,7 +706,9 @@ export class ClientApp {
   }
 
   private notifyProgress(): void {
-    this.invokeHost("save", () => this.options.onProgress?.(this.exportSave()));
+    const save = this.exportSave();
+    this.writeLocalSave(save);
+    this.invokeHost("save", () => this.options.onProgress?.(save));
   }
 
   private invokeHost(label: string, callback: () => void | Promise<void> | undefined): void {

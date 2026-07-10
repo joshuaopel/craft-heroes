@@ -1,4 +1,6 @@
 import type {
+  AbilityDefinition,
+  AbilityTrigger,
   CampaignData,
   ClassDefinition,
   ClassId,
@@ -18,6 +20,22 @@ function stats(attack: number, defense: number, move: number, range: number, sup
   return { attack, defense, move, range, support };
 }
 
+function ability(name: string, trigger: AbilityTrigger, icon: string, color: string, description: string, effect: string): AbilityDefinition {
+  return {
+    id: name
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, ""),
+    name,
+    trigger,
+    icon,
+    color,
+    description,
+    effect
+  };
+}
+
 export const defaultClassDefinitions: ClassDefinition[] = [
   {
     id: "Warrior",
@@ -27,16 +45,19 @@ export const defaultClassDefinitions: ClassDefinition[] = [
       head: {
         imageUrl: "./assets/classes/warrior-head.png",
         stats: stats(1, 3, 0, 1, 0),
+        abilities: [ability("Braced Focus", "passive", "SH", "#d24a35", "Ignore the first push or forced turn each round.", "ignorePush:1")],
         conditions: ["Braced: ignore first push"]
       },
       body: {
         imageUrl: "./assets/classes/warrior-body.png",
         stats: stats(4, 3, 0, 1, 0),
+        abilities: [ability("Guard Break", "onAttack", "SW", "#d24a35", "Strike the front tile and gain impact from high ground.", "frontMelee:1;heightAttack:1")],
         conditions: ["Melee: attacks the front tile"]
       },
       legs: {
         imageUrl: "./assets/classes/warrior-legs.png",
         stats: stats(0, 2, 2, 0, 0),
+        abilities: [ability("Hold Line", "onDefend", "ST", "#b96a42", "+1 defense if this unit did not move this turn.", "stationaryDefense:1")],
         conditions: ["Hold line: +1 defense if unmoved"]
       }
     }
@@ -49,16 +70,19 @@ export const defaultClassDefinitions: ClassDefinition[] = [
       head: {
         imageUrl: "./assets/classes/healer-head.png",
         stats: stats(0, 1, 0, 3, 3),
+        abilities: [ability("Cleanse", "onSupport", "SP", "#46a65c", "Clear one condition from a visible ally.", "cleanse:1")],
         conditions: ["Cleanse: clears one condition"]
       },
       body: {
         imageUrl: "./assets/classes/healer-body.png",
         stats: stats(1, 2, 0, 2, 4),
+        abilities: [ability("Mend", "active", "HE", "#46a65c", "Restore HP to an adjacent ally instead of attacking.", "healAdjacent:3")],
         conditions: ["Mend: restores adjacent ally HP"]
       },
       legs: {
         imageUrl: "./assets/classes/healer-legs.png",
         stats: stats(0, 1, 2, 0, 2),
+        abilities: [ability("Sanctuary Step", "onMove", "SA", "#6fcf7c", "Ignore water movement cost and leave a support aura.", "ignoreTerrain:water;supportAura:1")],
         conditions: ["Sanctuary: ignores water cost"]
       }
     }
@@ -71,16 +95,19 @@ export const defaultClassDefinitions: ClassDefinition[] = [
       head: {
         imageUrl: "./assets/classes/ranger-head.png",
         stats: stats(2, 1, 0, 4, 1),
+        abilities: [ability("Scout Sight", "passive", "EY", "#4f7f3c", "Extend line of sight when attacking from height.", "heightLineOfSight:1")],
         conditions: ["Scout: extends line of sight from height"]
       },
       body: {
         imageUrl: "./assets/classes/ranger-body.png",
         stats: stats(3, 1, 0, 5, 0),
+        abilities: [ability("Volley", "onAttack", "AR", "#4f7f3c", "Fire at range; cover can reduce or block the shot.", "rangedAttack:5;coverBlocked:1")],
         conditions: ["Volley: blocked by cover"]
       },
       legs: {
         imageUrl: "./assets/classes/ranger-legs.png",
         stats: stats(0, 1, 4, 0, 0),
+        abilities: [ability("Swift Pivot", "onMove", "BT", "#76a957", "Move farther and rotate one section after moving.", "bonusMove:1;postMoveRotate:1")],
         conditions: ["Swift: may rotate after moving"]
       }
     }
@@ -93,16 +120,19 @@ export const defaultClassDefinitions: ClassDefinition[] = [
       head: {
         imageUrl: "./assets/classes/mage-head.png",
         stats: stats(3, 1, 0, 4, 1),
+        abilities: [ability("Arcane Sight", "passive", "OR", "#6b4fa0", "Ignore low cover when tracing magical line of sight.", "ignoreLowCover:1")],
         conditions: ["Arcane sight: ignores low cover"]
       },
       body: {
         imageUrl: "./assets/classes/mage-body.png",
         stats: stats(4, 1, 0, 3, 2),
+        abilities: [ability("Blast", "onAttack", "FX", "#8c6ad1", "Damage the target tile and splash nearby enemies.", "splashRadius:1")],
         conditions: ["Blast: affects nearby target tiles"]
       },
       legs: {
         imageUrl: "./assets/classes/mage-legs.png",
         stats: stats(0, 0, 2, 0, 1),
+        abilities: [ability("Blink Step", "onMove", "BL", "#9f78e8", "Cross one height step or gap during movement.", "crossHeightStep:1")],
         conditions: ["Blink: crosses one height step"]
       }
     }

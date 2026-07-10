@@ -16,9 +16,22 @@ export interface ClassSectionStats {
   support: number;
 }
 
+export type AbilityTrigger = "active" | "passive" | "onMove" | "onAttack" | "onDefend" | "onSupport";
+
+export interface AbilityDefinition {
+  id: string;
+  name: string;
+  trigger: AbilityTrigger;
+  icon: string;
+  color: string;
+  description: string;
+  effect: string;
+}
+
 export interface ClassSectionDefinition {
   imageUrl: string;
   stats: ClassSectionStats;
+  abilities: AbilityDefinition[];
   conditions: string[];
 }
 
